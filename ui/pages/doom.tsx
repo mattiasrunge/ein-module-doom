@@ -66,7 +66,9 @@ export default function Doom() {
   const [fullscreen, setFullscreen] = useState(false);
   const [muted, setMuted] = useState(() => remembered(MUTED_KEY) === '1');
 
-  const selected = wads?.find((wad) => wad.name === chosen) ?? wads?.[0];
+  // The WAD to offer: the one chosen last, unless it is another game's, which does not play here.
+  const playable = wads?.filter((wad) => !wad.otherGame);
+  const selected = playable?.find((wad) => wad.name === chosen) ?? playable?.[0];
   const [cover, setCover] = useState<string>();
 
   // The header shows the title screen of the WAD chosen, and keeps the last one while the next is read.
