@@ -85,6 +85,13 @@ export default function Doom() {
     stop();
     setChosen(wad.name);
     remember(CHOSEN_KEY, wad.name);
+    if (wad.otherGame) {
+      setState({
+        kind: 'error',
+        message: `${wad.name} is ${wad.otherGame}, not Doom. This page plays Doom's games only: Doom, Doom II, Final Doom and Freedoom, and WADs made for them.`,
+      });
+      return;
+    }
     log.current = [];
     setState({ kind: 'loading', wad });
     frame.current?.focus();
@@ -294,10 +301,20 @@ export default function Doom() {
               ref={canvas}
               width={320}
               height={200}
-              style={{ width: '100%', height: '100%', imageRendering: 'pixelated', display: 'block' }}
+              // The pointer is no use to the game, which takes no mouse, and would stand over its view.
+              style={{ width: '100%', height: '100%', imageRendering: 'pixelated', display: 'block', cursor: state.kind === 'running' ? 'none' : undefined }}
             />
             {state.kind !== 'running' && (
-              <Stack pos='absolute' inset={0} align='center' justify='center' gap='xs' p='md'>
+              <Stack
+                pos='absolute'
+                inset={0}
+                align='center'
+                justify='center'
+                gap='xs'
+                p='md'
+                // While a WAD loads, the last game's frame stays dimmed behind the spinner.
+                bg={state.kind === 'loading' ? 'rgba(0, 0, 0, 0.7)' : undefined}
+              >
                 {state.kind === 'loading' ? <Loader color='red' /> : selected
                   ? (
                     <UnstyledButton onClick={() => void play(selected)} data-doom-play style={{ textAlign: 'center' }}>
@@ -360,8 +377,10 @@ function WadList({ wads, error, active, onPlay, onDelete, onPick }: ListProps & 
               background: wad.name === active ? 'var(--mrx-surface-raised)' : undefined,
             }}
           >
-            <Text size='sm' truncate fw={wad.name === active ? 600 : 400}>{wad.title}</Text>
-            <Text size='xs' c='dimmed' truncate>{wad.title === wad.name ? formatBytes(wad.size) : `${wad.name} · ${formatBytes(wad.size)}`}</Text>
+            <Text size='sm' truncate fw={wad.name === active ? 600 : 400} c={wad.otherGame ? 'dimmed' : undefined}>{wad.title}</Text>
+            <Text size='xs' c='dimmed' truncate>
+              {wad.otherGame ? `${wad.name} · not playable here` : wad.title === wad.name ? formatBytes(wad.size) : `${wad.name} · ${formatBytes(wad.size)}`}
+            </Text>
           </UnstyledButton>
           {onDelete && (
             <Tooltip label='Delete WAD'>
@@ -427,6 +446,9 @@ function BarButton({ label, icon, onClick, disabled, ...data }: { label: string;
 
 /** An error and the last lines Doom printed, which say why when the game itself gave up. */
 function describe(error: unknown, lines: string[]): string {
-  const message = error instanceof Error ? error.message : String(error);
+  // Doom ends with exit(-1) when it gives up (`I_Error`); Emscripten throws its own ExitStatus,
+  // not an Error, and the lines before it say why.
+  const exit = error as { name?: string; status?: number } | null;
+  const message = error instanceof Error ? error.message : exit?.name === 'ExitStatus' ? `Doom exited with status ${exit.status}` : String(error);
   return [message, ...lines].join('\n');
 }

@@ -16,6 +16,8 @@ export type Wad = {
   title: string;
   /** Bytes. */
   size: number;
+  /** The game it is when that is not Doom, which this engine cannot play: Heretic, Hexen, Strife. */
+  otherGame?: string;
 };
 
 /**
@@ -32,6 +34,19 @@ const IWADS: { name: string; title: string; maps: 'episodes' | 'levels' }[] = [
   { name: 'freedoom2.wad', title: 'Freedoom: Phase 2', maps: 'levels' },
   { name: 'freedm.wad', title: 'FreeDM', maps: 'levels' },
 ];
+
+/**
+ * IWADs of the other games on Doom's engine, which doomgeneric does not play: each needs an engine
+ * of its own. The list names them and says so rather than loading them to fail.
+ */
+const OTHER_GAMES: Record<string, string> = {
+  'heretic.wad': 'Heretic',
+  'heretic1.wad': 'Heretic (shareware)',
+  'hexen.wad': 'Hexen',
+  'hexdd.wad': 'Hexen: Deathkings of the Dark Citadel',
+  'strife1.wad': 'Strife',
+  'voices.wad': 'Strife voices',
+};
 
 const known = (name: string) => IWADS.find((iwad) => iwad.name === name.toLowerCase());
 const rank = (name: string) => {
@@ -51,7 +66,15 @@ export async function listWads(): Promise<Wad[]> {
   const entries = await execCommand<Entry[]>(`ls -l ${shq(WADS)}`);
   return entries
     .filter((entry) => entry.node.type === 'file' && /\.wad$/i.test(entry.name))
-    .map((entry) => ({ name: entry.name, title: known(entry.name)?.title ?? entry.name, size: entry.node.attrs.size ?? 0 }))
+    .map((entry) => {
+      const other = OTHER_GAMES[entry.name.toLowerCase()];
+      return {
+        name: entry.name,
+        title: other ?? known(entry.name)?.title ?? entry.name,
+        size: entry.node.attrs.size ?? 0,
+        ...(other ? { otherGame: other } : {}),
+      };
+    })
     .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
 }
 
