@@ -5,6 +5,8 @@
 // exports of the modules it lists in dependencies. Change mod.json and re-run the task.
 {
   "imports": {
+    "@doom/api": "./lib/api.ts",
+    "@doom/wads": "./lib/wads.ts",
     "@ein/ui/components": "../../src/builtin/ui/src/client/components/mod.ts",
     "@ein/ui/hooks": "../../src/builtin/ui/src/client/hooks/mod.ts",
     "@ein/ui/lib": "../../src/builtin/ui/src/client/lib/mod.ts",

@@ -4,9 +4,17 @@
   "description": "Doom in EiN: doomgeneric built to WebAssembly, played on a page of its own",
   "license": "GPL-2.0-or-later",
   "coreApi": "^0.15.0",
+  "exports": {
+    "./api": "./lib/api.ts"
+  },
+  "imports": {
+    "@doom/api": "./lib/api.ts",
+    "@doom/wads": "./lib/wads.ts"
+  },
   "ui": {
     "routes": {
-      "/doom": "ui/pages/doom.tsx"
+      "/doom": "ui/pages/doom.tsx",
+      "/cards/doom/demo": "ui/cards/demo.tsx"
     }
   }
 }

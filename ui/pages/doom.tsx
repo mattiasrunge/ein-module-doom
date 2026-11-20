@@ -1,11 +1,13 @@
-import { ActionIcon, Box, Group, Loader, Menu, Paper, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
-import { PageBar, TablerIcon } from '@ein/ui/components';
+import { ActionIcon, Box, Loader, Menu, Paper, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { EntityDetailHeader, TablerIcon } from '@ein/ui/components';
 import { usePhone } from '@ein/ui/hooks';
 import { formatBytes } from '@ein/ui/lib';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type Engine, quitted, startEngine } from '../doom/engine.ts';
 import { doomKey } from '../doom/keys.ts';
+import { useGameLoop } from '../doom/loop.ts';
 import { openSound, type Sound } from '../doom/sound.ts';
+import { titlePicture } from '../doom/titlepic.ts';
 import { deleteWad, listWads, type Wad, WADS } from '../doom/wads.ts';
 
 export const handle = { fullBleed: true, title: 'Doom', pattern: 'mixed' };
@@ -65,6 +67,19 @@ export default function Doom() {
   const [muted, setMuted] = useState(() => remembered(MUTED_KEY) === '1');
 
   const selected = wads?.find((wad) => wad.name === chosen) ?? wads?.[0];
+  const [cover, setCover] = useState<string>();
+
+  // The header shows the title screen of the WAD chosen, and keeps the last one while the next is read.
+  useEffect(() => {
+    if (!selected) return;
+    let current = true;
+    void titlePicture(selected).then((picture) => {
+      if (current && picture) setCover(picture);
+    });
+    return () => {
+      current = false;
+    };
+  }, [selected?.name, selected?.size]);
 
   const refresh = useCallback(() => {
     listWads().then((found) => {
@@ -135,35 +150,12 @@ export default function Doom() {
     refresh();
   }, [state, stop, refresh]);
 
-  // The loop: as many tics as are due on every animation frame, and a blit when Doom drew.
-  useEffect(() => {
-    const game = engine.current;
-    const context = canvas.current?.getContext('2d');
-    if (state.kind !== 'running' || !game || !context) return;
-    const image = context.createImageData(game.width, game.height);
-    let drawn = -1;
-    let request = 0;
-    const step = () => {
-      if (engine.current !== game) return;
-      try {
-        game.tick();
-      } catch (error) {
-        stop();
-        // Quit from Doom's menu leaves the page as it was before Play.
-        if (quitted(error)) setState({ kind: 'idle' });
-        else setState({ kind: 'error', message: describe(error, log.current) });
-        return;
-      }
-      if (game.frames() !== drawn) {
-        drawn = game.frames();
-        game.draw(image);
-        context.putImageData(image, 0, 0);
-      }
-      request = requestAnimationFrame(step);
-    };
-    request = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(request);
-  }, [state, stop]);
+  useGameLoop(state.kind === 'running' ? engine.current : null, canvas, (error) => {
+    stop();
+    // Quit from Doom's menu leaves the page as it was before Play.
+    if (quitted(error)) setState({ kind: 'idle' });
+    else setState({ kind: 'error', message: describe(error, log.current) });
+  });
 
   // A hidden page draws no frames, so the game stands still; its music waits with it.
   useEffect(() => {
@@ -248,18 +240,20 @@ export default function Doom() {
         overflow: 'hidden',
       }}
     >
-      <PageBar
+      <EntityDetailHeader
         title='Doom'
         pattern='mixed'
-        band
-        controls={
-          <>
-            {phone && <WadMenu {...list} />}
-            <BarButton label={muted ? 'Sound on' : 'Sound off'} icon={muted ? 'volume-off' : 'volume'} onClick={toggleMuted} data-doom-mute />
-            <BarButton label='Fullscreen' icon='maximize' disabled={state.kind !== 'running'} onClick={toggleFullscreen} data-doom-fullscreen />
-          </>
-        }
-        actions={{ upload: { path: WADS, name: 'Doom', onUploaded: refresh } }}
+        flowContent
+        // The game's own title screen, read out of its WAD: Freedoom's art, or Doom's.
+        coverArt={cover ? <img src={cover} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover', imageRendering: 'pixelated' }} /> : undefined}
+        controls={phone ? <WadMenu {...list} /> : undefined}
+        actions={{
+          upload: { path: WADS, name: 'Doom', onUploaded: refresh },
+          items: [
+            { label: muted ? 'Sound on' : 'Sound off', icon: muted ? 'volume-off' : 'volume', onClick: toggleMuted, button: true, iconOnly: true, stays: true },
+            { label: 'Fullscreen', icon: 'maximize', onClick: toggleFullscreen, disabled: state.kind !== 'running', button: true, iconOnly: true, stays: true },
+          ],
+        }}
       />
       <Box style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <WadPane {...list} onDelete={remove} />
@@ -352,7 +346,11 @@ type ListProps = {
   onPlay: (wad: Wad) => void;
 };
 
-/** The WADs, each a row that plays it; `onDelete` gives each a button that deletes it, `onPick` hears a row chosen. */
+/**
+ * The WADs, each a row that plays it. In the pane beside the game (`onDelete`, which gives each a
+ * button that deletes it) a row is the game's title screen with its title under it; in the phone's
+ * menu, its title alone. `onPick` hears a row chosen.
+ */
 function WadList({ wads, error, active, onPlay, onDelete, onPick }: ListProps & { onDelete?: (wad: Wad) => void; onPick?: () => void }) {
   if (error) return <Text size='sm' c='red' p='sm'>{error}</Text>;
   if (!wads) return <Loader size='sm' m='sm' />;
@@ -363,39 +361,86 @@ function WadList({ wads, error, active, onPlay, onDelete, onPick }: ListProps & 
       </Text>
     );
   }
+  const detail = (wad: Wad) => wad.otherGame ? `${wad.name} · not playable here` : wad.title === wad.name ? formatBytes(wad.size) : `${wad.name} · ${formatBytes(wad.size)}`;
   return (
-    <Stack gap={2}>
+    <Stack gap={onDelete ? 'xs' : 2}>
       {wads.map((wad) => (
-        <Group key={wad.name} gap={4} wrap='nowrap' align='center'>
-          <UnstyledButton
-            onClick={() => {
-              onPick?.();
-              onPlay(wad);
-            }}
-            data-doom-wad={wad.name}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: '8px 10px',
-              borderRadius: 'var(--mantine-radius-sm)',
-              background: wad.name === active ? 'var(--mrx-surface-raised)' : undefined,
-            }}
-          >
-            <Text size='sm' truncate fw={wad.name === active ? 600 : 400} c={wad.otherGame ? 'dimmed' : undefined}>{wad.title}</Text>
-            <Text size='xs' c='dimmed' truncate>
-              {wad.otherGame ? `${wad.name} · not playable here` : wad.title === wad.name ? formatBytes(wad.size) : `${wad.name} · ${formatBytes(wad.size)}`}
-            </Text>
-          </UnstyledButton>
+        <UnstyledButton
+          key={wad.name}
+          onClick={() => {
+            onPick?.();
+            onPlay(wad);
+          }}
+          data-doom-wad={wad.name}
+          style={{
+            padding: onDelete ? 6 : '8px 10px',
+            borderRadius: 'var(--mantine-radius-md)',
+            background: wad.name === active ? 'var(--mrx-surface-raised)' : undefined,
+            outline: wad.name === active && onDelete ? '2px solid var(--mantine-color-red-6)' : undefined,
+            outlineOffset: -2,
+          }}
+        >
           {onDelete && (
-            <Tooltip label='Delete WAD'>
-              <ActionIcon variant='subtle' color='gray' size='sm' onClick={() => onDelete(wad)} aria-label={`Delete ${wad.name}`}>
-                <TablerIcon name='trash' size={14} />
-              </ActionIcon>
-            </Tooltip>
+            <Box pos='relative' mb={6}>
+              <TitleScreen wad={wad} />
+              <Tooltip label='Delete WAD'>
+                <ActionIcon
+                  pos='absolute'
+                  top={6}
+                  right={6}
+                  variant='filled'
+                  color='dark'
+                  size='sm'
+                  component='span'
+                  role='button'
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(wad);
+                  }}
+                  aria-label={`Delete ${wad.name}`}
+                >
+                  <TablerIcon name='trash' size={14} />
+                </ActionIcon>
+              </Tooltip>
+            </Box>
           )}
-        </Group>
+          <Text size='sm' truncate fw={wad.name === active ? 600 : 400} c={wad.otherGame ? 'dimmed' : undefined}>{wad.title}</Text>
+          <Text size='xs' c='dimmed' truncate>{detail(wad)}</Text>
+        </UnstyledButton>
       ))}
     </Stack>
+  );
+}
+
+/** A WAD's title screen at 4:3, or a dark tile with its title when it has none to show. */
+function TitleScreen({ wad }: { wad: Wad }) {
+  const [picture, setPicture] = useState<string | null>();
+  useEffect(() => {
+    let current = true;
+    void titlePicture(wad).then((found) => {
+      if (current) setPicture(found ?? null);
+    });
+    return () => {
+      current = false;
+    };
+  }, [wad.name, wad.size]);
+  return (
+    <Box
+      style={{
+        aspectRatio: '4 / 3',
+        borderRadius: 'var(--mantine-radius-sm)',
+        overflow: 'hidden',
+        background: '#000',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: wad.otherGame ? 0.5 : 1,
+      }}
+    >
+      {picture
+        ? <img src={picture} alt='' style={{ width: '100%', height: '100%', imageRendering: 'pixelated', display: 'block' }} />
+        : picture === null && <TablerIcon name='skull' size={40} color='var(--mantine-color-dark-3)' />}
+    </Box>
   );
 }
 
@@ -434,17 +479,6 @@ function WadMenu(props: ListProps) {
         </ScrollArea.Autosize>
       </Menu.Dropdown>
     </Menu>
-  );
-}
-
-function BarButton({ label, icon, onClick, disabled, ...data }: { label: string; icon: string; onClick: () => void; disabled?: boolean } & Record<`data-${string}`, boolean>) {
-  const phone = usePhone();
-  return (
-    <Tooltip label={label}>
-      <ActionIcon variant='subtle' size={phone ? BAR_BUTTON.size : undefined} onClick={onClick} disabled={disabled} aria-label={label} {...data}>
-        <TablerIcon name={icon} size={phone ? BAR_BUTTON.icon : 17} />
-      </ActionIcon>
-    </Tooltip>
   );
 }
 

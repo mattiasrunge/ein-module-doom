@@ -272,7 +272,7 @@ try {
     if (after !== '/doom') failed = true;
 
     // Fullscreen.
-    await click('[data-doom-fullscreen]');
+    await click('[aria-label="Fullscreen"]');
     await sleep(1000);
     const fullscreen = await evaluate(`document.fullscreenElement?.dataset.doomState ?? 'none'`);
     console.log(`fullscreen element is the game: ${fullscreen === 'running'}`);

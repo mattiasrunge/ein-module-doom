@@ -1,0 +1,33 @@
+#!ts
+/** doom-wads — the WADs in the Doom page's folder, with each game's title, as the page lists them. */
+import type { CmdReturn, Command, NodeAttrs } from '@ein/client';
+import type { Wad } from '@doom/api';
+import { byRank, wadOf, WADS } from '@doom/wads';
+
+const doomWads = async (cmd: Command): CmdReturn => {
+  let wads: Wad[] = [];
+  // No folder yet is no WADs yet: the page makes it, and the freedoom service fills it.
+  if (await cmd.sys.vfs.exists(cmd.access, WADS)) {
+    const children = await cmd.sys.vfs.children(cmd.access, WADS);
+    const nodes = await Promise.all(children.map((child) => cmd.sys.vfs.get<NodeAttrs & { size?: number }>(cmd.access, `${WADS}/${child.name}`).catch(() => undefined)));
+    wads = children
+      .flatMap((child, i) => nodes[i]?.type === 'file' ? [wadOf(child.name, nodes[i]?.attrs.size ?? 0)] : [])
+      .filter((wad): wad is Wad => wad !== undefined)
+      .sort(byRank);
+  }
+  if (cmd.json) await cmd.writeJSON(wads satisfies Wad[]);
+  else for (const wad of wads) await cmd.writeLn(`${wad.name}  ${wad.title}${wad.otherGame ? '  (not Doom: not playable here)' : ''}`);
+  return 0;
+};
+
+doomWads.spec = {
+  name: 'doom-wads',
+  effect: 'read' as const,
+  description: `List the WADs in ${WADS}, which the Doom page plays: known games first, by title, in the order they came out`,
+  args: [],
+  flags: [],
+  examples: ['doom-wads'],
+  returns: 'One entry per .wad: name, title, size in bytes, and otherGame for an IWAD of a game other than Doom.',
+};
+
+export default doomWads;

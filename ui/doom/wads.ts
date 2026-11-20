@@ -1,81 +1,18 @@
 import { shq } from '@ein/ui/lib';
 import { execCommand } from '@ein/ui/signals';
+import type { Wad } from '../../lib/api.ts';
+import { IWADS, WADS } from '../../lib/wads.ts';
+
+export type { Wad };
+export { WADS };
 
 /**
- * Where the game data is: a folder in the household's shared home, so everyone signed in plays
- * the same WADs and may add to them. The module's `freedoom` service puts Freedoom here when the
- * module is installed, and what is dropped on the page is uploaded here.
- */
-export const WADS = '/groups/users/doom';
-
-/** A `.wad` in `WADS`, as the page lists it. */
-export type Wad = {
-  /** The file's name, which is also how the page remembers it. */
-  name: string;
-  /** What the list calls it: the game's title for a known IWAD, else the file's name. */
-  title: string;
-  /** Bytes. */
-  size: number;
-  /** The game it is when that is not Doom, which this engine cannot play: Heretic, Hexen, Strife. */
-  otherGame?: string;
-};
-
-/**
- * The IWADs the page knows by name, with their titles, in the order the page picks one when none
- * has been chosen and when a PWAD needs one: the games first, then Freedoom.
- */
-const IWADS: { name: string; title: string; maps: 'episodes' | 'levels' }[] = [
-  { name: 'doom2.wad', title: 'Doom II', maps: 'levels' },
-  { name: 'doom.wad', title: 'Doom', maps: 'episodes' },
-  { name: 'plutonia.wad', title: 'Final Doom: The Plutonia Experiment', maps: 'levels' },
-  { name: 'tnt.wad', title: 'Final Doom: TNT: Evilution', maps: 'levels' },
-  { name: 'doom1.wad', title: 'Doom (shareware)', maps: 'episodes' },
-  { name: 'freedoom1.wad', title: 'Freedoom: Phase 1', maps: 'episodes' },
-  { name: 'freedoom2.wad', title: 'Freedoom: Phase 2', maps: 'levels' },
-  { name: 'freedm.wad', title: 'FreeDM', maps: 'levels' },
-];
-
-/**
- * IWADs of the other games on Doom's engine, which doomgeneric does not play: each needs an engine
- * of its own. The list names them and says so rather than loading them to fail.
- */
-const OTHER_GAMES: Record<string, string> = {
-  'heretic.wad': 'Heretic',
-  'heretic1.wad': 'Heretic (shareware)',
-  'hexen.wad': 'Hexen',
-  'hexdd.wad': 'Hexen: Deathkings of the Dark Citadel',
-  'strife1.wad': 'Strife',
-  'voices.wad': 'Strife voices',
-};
-
-const known = (name: string) => IWADS.find((iwad) => iwad.name === name.toLowerCase());
-const rank = (name: string) => {
-  const at = IWADS.findIndex((iwad) => iwad.name === name.toLowerCase());
-  return at === -1 ? IWADS.length : at;
-};
-
-/** What `ls -l` answers in JSON mode for each entry: only the parts the page reads. */
-type Entry = { name: string; node: { type: string; attrs: { size?: number } } };
-
-/**
- * The WADs in `WADS`, known IWADs first in `IWADS`' order, then the rest by name. The folder is
- * made when it is not there yet, so the list is empty rather than an error before Freedoom lands.
+ * The WADs in `WADS`, as `doom-wads` lists them. The folder is made when it is not there yet, so the
+ * list is empty rather than an error before Freedoom lands, and an upload has somewhere to go.
  */
 export async function listWads(): Promise<Wad[]> {
   await execCommand(`mkdir -p ${shq(WADS)}`);
-  const entries = await execCommand<Entry[]>(`ls -l ${shq(WADS)}`);
-  return entries
-    .filter((entry) => entry.node.type === 'file' && /\.wad$/i.test(entry.name))
-    .map((entry) => {
-      const other = OTHER_GAMES[entry.name.toLowerCase()];
-      return {
-        name: entry.name,
-        title: other ?? known(entry.name)?.title ?? entry.name,
-        size: entry.node.attrs.size ?? 0,
-        ...(other ? { otherGame: other } : {}),
-      };
-    })
-    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+  return await execCommand<Wad[]>('doom-wads');
 }
 
 export async function deleteWad(name: string): Promise<void> {

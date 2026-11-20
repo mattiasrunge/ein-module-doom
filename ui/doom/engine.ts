@@ -55,13 +55,13 @@ async function fetchFile(path: string): Promise<Uint8Array> {
 /**
  * Load the engine and `wad` and start the game; `wads` are the others there are, to find the
  * IWAD a PWAD is played with. `log` gets what Doom prints, line by line, and `sound` the game's
- * sound effects and music.
+ * sound effects and music; without it the game is silent.
  *
  * The glue is imported from a URL held in a variable, so core's bundler leaves it alone and the
  * browser loads it at runtime. The wasm is fetched here and handed over as bytes, so how `/file/`
  * labels a `.wasm` does not matter.
  */
-export async function startEngine({ wad, wads, sound, log }: { wad: Wad; wads: Wad[]; sound: Sound; log: (line: string) => void }): Promise<Engine> {
+export async function startEngine({ wad, wads, sound, log }: { wad: Wad; wads: Wad[]; sound?: Sound; log: (line: string) => void }): Promise<Engine> {
   const glueUrl = fileUrl(`${ASSETS}/doom.js`);
   const [glue, wasmBinary, bytes] = await Promise.all([
     import(glueUrl) as Promise<{ default: (options: object) => Promise<DoomModule> }>,
@@ -78,23 +78,25 @@ export async function startEngine({ wad, wads, sound, log }: { wad: Wad; wads: W
     iwadBytes = await fetchFile(`${WADS}/${iwad.name}`);
   }
 
-  const einSound: SfxSink = sound.sfx;
+  const einSound: SfxSink | undefined = sound?.sfx;
   const doom = await glue.default({ wasmBinary, print: log, printErr: log, einSound });
+  // Without sound the music is made at a rate nothing asks for, and never pulled.
+  const sampleRate = sound?.context.sampleRate ?? 48000;
   // The engine's file system is its own, in memory: the WADs go in under their own names, which
   // is what Doom tells its games apart by.
   if (iwad && iwadBytes) {
     doom.FS.writeFile(`/${iwad.name}`, iwadBytes);
     doom.FS.writeFile(`/${wad.name}`, bytes);
-    doom.ccall('ein_start', null, ['string', 'string', 'number'], [`/${iwad.name}`, `/${wad.name}`, sound.context.sampleRate]);
+    doom.ccall('ein_start', null, ['string', 'string', 'number'], [`/${iwad.name}`, `/${wad.name}`, sampleRate]);
   } else {
     doom.FS.writeFile(`/${wad.name}`, bytes);
-    doom.ccall('ein_start', null, ['string', 'string', 'number'], [`/${wad.name}`, '', sound.context.sampleRate]);
+    doom.ccall('ein_start', null, ['string', 'string', 'number'], [`/${wad.name}`, '', sampleRate]);
   }
 
   // The music: interleaved 16-bit stereo from the emulated OPL, into a buffer kept for it.
   let musicFrames = 0;
   let musicBuffer = 0;
-  sound.music((left, right) => {
+  sound?.music((left, right) => {
     if (left.length > musicFrames) {
       musicFrames = left.length;
       musicBuffer = doom._malloc(musicFrames * 4);
