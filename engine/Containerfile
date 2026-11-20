@@ -21,6 +21,11 @@ RUN git init -q /src \
 COPY nonblocking-wipe.patch /src/
 RUN git -C /src apply /src/nonblocking-wipe.patch
 
+# Quit runs Doom's exit functions, one of which was a function of another type cast to theirs, which
+# WebAssembly traps on; and doomgeneric's I_Quit did not exit, so the game ran on after Quit.
+COPY quit.patch /src/
+RUN git -C /src apply /src/quit.patch
+
 # Chocolate Doom, pinned at its release 3.0.1, for the OPL music doomgeneric left out: the MIDI
 # player (i_oplmusic.c, midifile.c) and the emulator with its callback queue (opl3.c, opl_queue.c).
 # GPL-2.0-or-later; opl3.c is LGPL-2.1-or-later.

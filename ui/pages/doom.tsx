@@ -3,7 +3,7 @@ import { PageBar, TablerIcon } from '@ein/ui/components';
 import { usePhone } from '@ein/ui/hooks';
 import { formatBytes } from '@ein/ui/lib';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type Engine, startEngine } from '../doom/engine.ts';
+import { type Engine, quitted, startEngine } from '../doom/engine.ts';
 import { doomKey } from '../doom/keys.ts';
 import { openSound, type Sound } from '../doom/sound.ts';
 import { deleteWad, listWads, type Wad, WADS } from '../doom/wads.ts';
@@ -142,7 +142,9 @@ export default function Doom() {
         game.tick();
       } catch (error) {
         stop();
-        setState({ kind: 'error', message: describe(error, log.current) });
+        // Quit from Doom's menu leaves the page as it was before Play.
+        if (quitted(error)) setState({ kind: 'idle' });
+        else setState({ kind: 'error', message: describe(error, log.current) });
         return;
       }
       if (game.frames() !== drawn) {

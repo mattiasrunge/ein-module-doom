@@ -1,0 +1,45 @@
+diff --git a/doomgeneric/d_main.c b/doomgeneric/d_main.c
+index 9012e5f..82c054d 100644
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1157,6 +1157,16 @@ static void LoadIwadDeh(void)
+ }
+ #endif
+ 
++//
++// D_CheckDemoStatus
++//  G_CheckDemoStatus as an exit function: it returns a boolean, and
++//  WebAssembly traps on a call through a pointer of another type.
++//
++static void D_CheckDemoStatus (void)
++{
++    G_CheckDemoStatus();
++}
++
+ //
+ // D_DoomMain
+ //
+@@ -1510,7 +1520,7 @@ void D_DoomMain (void)
+         printf("Playing demo %s.\n", file);
+     }
+ 
+-    I_AtExit((atexit_func_t) G_CheckDemoStatus, true);
++    I_AtExit(D_CheckDemoStatus, true);
+ 
+     // Generate the WAD hash table.  Speed things up a bit.
+     W_GenerateHashTable();
+diff --git a/doomgeneric/i_system.c b/doomgeneric/i_system.c
+index 53ab2c9..b9f8ed5 100644
+--- a/doomgeneric/i_system.c
++++ b/doomgeneric/i_system.c
+@@ -259,9 +259,9 @@ void I_Quit (void)
+ 
+ #if ORIGCODE
+     SDL_Quit();
++#endif
+ 
+     exit(0);
+-#endif
+ }
+ 
+ #if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__)

@@ -27,7 +27,10 @@ export type Engine = {
   iwad?: string;
   width: number;
   height: number;
-  /** Run the tics that are due; throws when the game exits or fails (Doom's `I_Error`). */
+  /**
+   * Run the tics that are due; throws when the game ends: what `quitted` recognises when the player
+   * chose Quit, anything else when it failed (Doom's `I_Error`).
+   */
   tick(): void;
   /** How many frames the game has drawn: a new number means a new frame to copy. */
   frames(): number;
@@ -35,6 +38,12 @@ export type Engine = {
   draw(image: ImageData): void;
   key(pressed: boolean, key: number): void;
 };
+
+/** Whether `error`, thrown by `tick`, is the game ending on Quit: Emscripten's `ExitStatus` for exit(0). */
+export function quitted(error: unknown): boolean {
+  const exit = error as { name?: string; status?: number } | null;
+  return exit?.name === 'ExitStatus' && exit.status === 0;
+}
 
 /** Fetch a file as bytes; `/file/` needs the session's cookie, which a same-origin fetch sends. */
 async function fetchFile(path: string): Promise<Uint8Array> {
