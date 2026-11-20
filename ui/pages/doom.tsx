@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Box, Group, Loader, Menu, Paper, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Box, Group, Loader, Menu, Paper, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { PageBar, TablerIcon } from '@ein/ui/components';
 import { usePhone } from '@ein/ui/hooks';
 import { formatBytes } from '@ein/ui/lib';
@@ -282,11 +282,6 @@ export default function Doom() {
             background: fullscreen ? '#000' : undefined,
           }}
         >
-          {state.kind === 'error' && (
-            <Alert color='red' title='Doom stopped' w='100%' maw={960}>
-              <Text size='sm' style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{state.message}</Text>
-            </Alert>
-          )}
           {/* 320 by 200 drawn at 4:3, the shape Doom's pixels had on a CRT, as large as fits beside the line under it. */}
           <Box
             pos='relative'
@@ -310,12 +305,21 @@ export default function Doom() {
                 inset={0}
                 align='center'
                 justify='center'
-                gap='xs'
+                gap='md'
                 p='md'
-                // While a WAD loads, the last game's frame stays dimmed behind the spinner.
-                bg={state.kind === 'loading' ? 'rgba(0, 0, 0, 0.7)' : undefined}
+                // While a WAD loads, or after the game stopped, the last frame stays dimmed behind.
+                bg={state.kind === 'loading' || state.kind === 'error' ? 'rgba(0, 0, 0, 0.75)' : undefined}
+                style={{ overflow: 'auto' }}
               >
-                {state.kind === 'loading' ? <Loader color='red' /> : selected
+                {state.kind === 'error' && (
+                  <Stack gap={4} maw={640} w='100%' data-doom-error>
+                    <Text c='red.5' fw={600}>Doom stopped</Text>
+                    <Text c='gray.3' size='sm' style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{state.message}</Text>
+                  </Stack>
+                )}
+                {state.kind === 'loading'
+                  ? <Loader color='red' />
+                  : selected && !selected.otherGame
                   ? (
                     <UnstyledButton onClick={() => void play(selected)} data-doom-play style={{ textAlign: 'center' }}>
                       <Stack align='center' gap={6}>
@@ -324,7 +328,7 @@ export default function Doom() {
                       </Stack>
                     </UnstyledButton>
                   )
-                  : <Text c='gray.4' ta='center' size='sm'>{wads ? 'No game data yet. Drop a WAD file on the page.' : ''}</Text>}
+                  : !selected && <Text c='gray.4' ta='center' size='sm'>{wads ? 'No game data yet. Drop a WAD file on the page.' : ''}</Text>}
               </Stack>
             )}
           </Box>
