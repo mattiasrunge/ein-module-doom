@@ -1,0 +1,4 @@
+{
+  "description": "Puts Freedoom in the Doom page's WADs once, when the module is installed",
+  "restartPolicy": "on-failure"
+}

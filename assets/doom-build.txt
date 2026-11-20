@@ -1,1 +1,1 @@
-doomgeneric e257a09527062bfb986b6e5e0780839b6cbd5b71 with nonblocking-wipe.patch, emsdk 6.0.13
+doomgeneric e257a09527062bfb986b6e5e0780839b6cbd5b71 with nonblocking-wipe.patch, Chocolate Doom 539ef367c9982c5945f8608b63d2236eaecc929a's OPL music, emsdk 6.0.13

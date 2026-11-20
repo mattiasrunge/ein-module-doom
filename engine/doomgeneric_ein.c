@@ -14,10 +14,11 @@
 // DESCRIPTION:
 //	doomgeneric's platform layer for the EiN page: no SDL, no window
 //	and no loop of its own. The page drives the game: it writes the
-//	IWAD into Emscripten's in-memory file system, calls ein_start
+//	WADs into Emscripten's in-memory file system, calls ein_start
 //	once, then ein_tick from requestAnimationFrame, copies the frame
 //	from ein_screen onto its canvas whenever ein_frames moves on, and
-//	hands over keys with ein_key, already in Doom's key codes.
+//	hands over keys with ein_key, already in Doom's key codes. Sound
+//	is ein_sound.c and opl_ein.c.
 //
 
 #include <stdint.h>
@@ -25,6 +26,7 @@
 #include <emscripten.h>
 
 #include "doomgeneric.h"
+#include "i_sound.h"
 
 // Keys the page handed over that the game has not read yet. A frame
 // reads them all, so this only needs to hold one frame's worth.
@@ -74,14 +76,18 @@ void DG_SetWindowTitle(const char *title)
 {
 }
 
-// Start the game on the IWAD at `iwad` in the in-memory file system. It
-// returns after the first tick; ein_tick runs the rest.
+// Start the game on the IWAD at `iwad` in the in-memory file system,
+// with the PWAD at `pwad` over it unless that is empty, its music made
+// at `samplerate`, the page's. It returns after the first tick;
+// ein_tick runs the rest.
 EMSCRIPTEN_KEEPALIVE
-void ein_start(const char *iwad)
+void ein_start(const char *iwad, const char *pwad, int samplerate)
 {
-    static char *argv[] = { "doom", "-iwad", NULL, NULL };
+    static char *argv[] = { "doom", "-iwad", NULL, "-file", NULL, NULL };
     argv[2] = (char *) iwad;
-    doomgeneric_Create(3, argv);
+    argv[4] = (char *) pwad;
+    snd_samplerate = samplerate;
+    doomgeneric_Create(pwad[0] != '\0' ? 5 : 3, argv);
 }
 
 // Run whatever tics are due and draw a frame.
