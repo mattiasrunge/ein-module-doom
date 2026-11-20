@@ -34,5 +34,5 @@ for wad in freedoom1.wad freedoom2.wad; do
   fi
 done
 rm -r "$work" "$work.zip"
-touch "$marker"
+echo "$url" > "$marker"
 echo "freedoom: $release put in $wads"

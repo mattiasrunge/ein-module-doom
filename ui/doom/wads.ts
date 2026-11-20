@@ -47,7 +47,8 @@ type Entry = { name: string; node: { type: string; attrs: { size?: number } } };
  * made when it is not there yet, so the list is empty rather than an error before Freedoom lands.
  */
 export async function listWads(): Promise<Wad[]> {
-  const entries = await execCommand<Entry[]>(`mkdir -p ${shq(WADS)} && ls -l ${shq(WADS)}`);
+  await execCommand(`mkdir -p ${shq(WADS)}`);
+  const entries = await execCommand<Entry[]>(`ls -l ${shq(WADS)}`);
   return entries
     .filter((entry) => entry.node.type === 'file' && /\.wad$/i.test(entry.name))
     .map((entry) => ({ name: entry.name, title: known(entry.name)?.title ?? entry.name, size: entry.node.attrs.size ?? 0 }))
