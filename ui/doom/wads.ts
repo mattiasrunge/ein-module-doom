@@ -24,7 +24,7 @@ export type Wad = {
  */
 const IWADS: { name: string; title: string; maps: 'episodes' | 'levels' }[] = [
   { name: 'doom2.wad', title: 'Doom II', maps: 'levels' },
-  { name: 'doom.wad', title: 'The Ultimate Doom', maps: 'episodes' },
+  { name: 'doom.wad', title: 'Doom', maps: 'episodes' },
   { name: 'plutonia.wad', title: 'Final Doom: The Plutonia Experiment', maps: 'levels' },
   { name: 'tnt.wad', title: 'Final Doom: TNT: Evilution', maps: 'levels' },
   { name: 'doom1.wad', title: 'Doom (shareware)', maps: 'episodes' },
