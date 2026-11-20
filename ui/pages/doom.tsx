@@ -70,6 +70,8 @@ export default function Doom() {
   const playable = wads?.filter((wad) => !wad.otherGame);
   const selected = playable?.find((wad) => wad.name === chosen) ?? playable?.[0];
   const [cover, setCover] = useState<string>();
+  // What the header names: the game playing or loading, else the one Play would start.
+  const shown = state.kind === 'loading' || state.kind === 'running' ? state.wad : selected;
 
   // The header shows the title screen of the WAD chosen, and keeps the last one while the next is read.
   useEffect(() => {
@@ -243,7 +245,9 @@ export default function Doom() {
       }}
     >
       <EntityDetailHeader
-        title='Doom'
+        eyebrow={shown ? 'Doom' : undefined}
+        title={shown?.title ?? 'Doom'}
+        name='Doom'
         pattern='mixed'
         flowContent
         // The game's own title screen, read out of its WAD: Freedoom's art, or Doom's.
