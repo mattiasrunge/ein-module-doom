@@ -209,8 +209,11 @@ static void Heard(net_addr_t *addr, net_querydata_t *data,
 {
     int i;
 
-    if (data->gamemode != ours.gamemode
-     || data->gamemission != ours.gamemission)
+    // A server nobody plays on yet has no game until the first player
+    // brings theirs; one that has another is not this game's.
+    if (data->gamemode != indetermined
+     && (data->gamemode != ours.gamemode
+      || data->gamemission != ours.gamemission))
     {
         return;
     }

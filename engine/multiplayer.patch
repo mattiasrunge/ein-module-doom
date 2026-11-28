@@ -378,18 +378,19 @@ index f7f7f42d..057cc8e6 100644
  		 
  	// spawn at random spot if in death match 
 diff --git a/src/doom/m_menu.c b/src/doom/m_menu.c
-index 919258a5..7c409846 100644
+index 919258a5..43cb09dd 100644
 --- a/src/doom/m_menu.c
 +++ b/src/doom/m_menu.c
-@@ -244,6 +244,7 @@ static void M_QuickSave(void);
+@@ -244,6 +244,8 @@ static void M_QuickSave(void);
  static void M_QuickLoad(void);
  
  static void M_DrawMainMenu(void);
 +static void M_EIN_JoinGame(int choice);
++static void M_EIN_WriteBig(int x, int y, const char *string);
  static void M_DrawReadThis1(void);
  static void M_DrawReadThis2(void);
  static void M_DrawNewGame(void);
-@@ -283,6 +284,7 @@ enum
+@@ -283,6 +285,7 @@ enum
      options,
      loadgame,
      savegame,
@@ -397,7 +398,7 @@ index 919258a5..7c409846 100644
      readthis,
      quitdoom,
      main_end
-@@ -294,6 +296,8 @@ menuitem_t MainMenu[]=
+@@ -294,6 +297,8 @@ menuitem_t MainMenu[]=
      {1,"M_OPTION",M_Options,'o'},
      {1,"M_LOADG",M_LoadGame,'l'},
      {1,"M_SAVEG",M_SaveGame,'s'},
@@ -406,7 +407,7 @@ index 919258a5..7c409846 100644
      // Another hickup with Special edition.
      {1,"M_RDTHIS",M_ReadThis,'r'},
      {1,"M_QUITG",M_QuitDOOM,'q'}
-@@ -1288,11 +1292,108 @@ void M_MusicVol(int choice)
+@@ -1288,11 +1293,131 @@ void M_MusicVol(int choice)
  //
  void M_DrawMainMenu(void)
  {
@@ -423,8 +424,7 @@ index 919258a5..7c409846 100644
 +    {
 +        if (MainMenu[i].routine == M_EIN_JoinGame)
 +        {
-+            M_WriteText(MainDef.x, MainDef.y + LINEHEIGHT * i + 8
-+                        - M_StringHeight("Join Game") / 2, "Join Game");
++            M_EIN_WriteBig(MainDef.x, MainDef.y + LINEHEIGHT * i + 1, "Join Game");
 +        }
 +    }
 +}
@@ -459,9 +459,38 @@ index 919258a5..7c409846 100644
 +    &MainDef,
 +    EIN_JoinMenu,
 +    M_EIN_DrawJoin,
-+    72,48,
++    80,54,
 +    0
 +};
++
++// [EiN] Write a line in the hu_font twice its size, as high as the
++// menus' pictures: Doom has no larger font.
++
++#define EIN_BIG 2
++
++static int M_EIN_BigWidth(const char *string)
++{
++    return M_StringWidth(string) * EIN_BIG;
++}
++
++static void M_EIN_WriteBig(int x, int y, const char *string)
++{
++    const char *ch;
++
++    for (ch = string; *ch != '\0'; ++ch)
++    {
++        int c = toupper(*ch) - HU_FONTSTART;
++
++        if (c < 0 || c >= HU_FONTSIZE)
++        {
++            x += 4 * EIN_BIG;
++            continue;
++        }
++
++        V_DrawPatchScaled(x, y, hu_font[c], EIN_BIG);
++        x += SHORT(hu_font[c]->width) * EIN_BIG;
++    }
++}
 +
 +static void M_EIN_JoinGame(int choice)
 +{
@@ -488,20 +517,15 @@ index 919258a5..7c409846 100644
 +        itemOn = EIN_JoinDef.numitems - 1;
 +    }
 +
-+    M_WriteText((ORIGWIDTH - M_StringWidth("Join Game")) / 2, 24,
-+                "Join Game");
++    // As Load Game lays its slots out, a line in a frame each.
++    M_EIN_WriteBig((ORIGWIDTH - M_EIN_BigWidth("Join Game")) / 2, 28,
++                   "Join Game");
 +
-+    if (found == 0)
++    for (i = 0; i < EIN_JoinDef.numitems; ++i)
 +    {
-+        M_WriteText(EIN_JoinDef.x, EIN_JoinDef.y + 4,
-+                    "Looking for games...");
-+        return;
-+    }
-+
-+    for (i = 0; i < found; ++i)
-+    {
-+        M_WriteText(EIN_JoinDef.x, EIN_JoinDef.y + LINEHEIGHT * i + 4,
-+                    EIN_FoundLine(i));
++        M_DrawSaveLoadBorder(EIN_JoinDef.x, EIN_JoinDef.y + LINEHEIGHT * i);
++        M_WriteText(EIN_JoinDef.x, EIN_JoinDef.y + LINEHEIGHT * i,
++                    found > 0 ? EIN_FoundLine(i) : "Looking for games...");
 +    }
 +}
 +
@@ -515,7 +539,7 @@ index 919258a5..7c409846 100644
  }
  
  
-@@ -2056,6 +2157,16 @@ M_StartMessage
+@@ -2056,6 +2181,16 @@ M_StartMessage
  //
  // Find string width from hu_font chars
  //
@@ -532,7 +556,7 @@ index 919258a5..7c409846 100644
  int M_StringWidth(const char *string)
  {
      size_t             i;
-@@ -3352,9 +3463,24 @@ void M_Init (void)
+@@ -3352,9 +3487,24 @@ void M_Init (void)
          ReadDef2.y -= 10;
      }
  
@@ -751,7 +775,7 @@ index d22415fb..5508d7b7 100644
  
          // spawn at random spot if in death match
 diff --git a/src/heretic/mn_menu.c b/src/heretic/mn_menu.c
-index b4a2836d..2fb5a2c6 100644
+index b4a2836d..e0911bf5 100644
 --- a/src/heretic/mn_menu.c
 +++ b/src/heretic/mn_menu.c
 @@ -39,6 +39,7 @@
@@ -806,7 +830,7 @@ index b4a2836d..2fb5a2c6 100644
 +};
 +
 +static Menu_t EinJoinMenu = {
-+    38, 40,
++    38, 50,
 +    DrawEinJoinMenu,
 +    1, EinJoinItems,
 +    0,
@@ -1206,7 +1230,7 @@ index 6ed6c3fb..275f315e 100644
  
          if (deathmatch)
 diff --git a/src/hexen/mn_menu.c b/src/hexen/mn_menu.c
-index 333d09bc..9d574eb6 100644
+index 333d09bc..871f1665 100644
 --- a/src/hexen/mn_menu.c
 +++ b/src/hexen/mn_menu.c
 @@ -38,6 +38,7 @@
@@ -1262,7 +1286,7 @@ index 333d09bc..9d574eb6 100644
 +};
 +
 +static Menu_t EinJoinMenu = {
-+    38, 40,
++    38, 50,
 +    DrawEinJoinMenu,
 +    1, EinJoinItems,
 +    0,
@@ -1955,7 +1979,7 @@ index ab852c08..f08de7fa 100644
  
  // Data sent in response to server queries
 diff --git a/src/net_server.c b/src/net_server.c
-index 9374b64e..44a88111 100644
+index 9374b64e..a21ef14c 100644
 --- a/src/net_server.c
 +++ b/src/net_server.c
 @@ -120,6 +120,11 @@ typedef struct
@@ -2064,7 +2088,7 @@ index 9374b64e..44a88111 100644
  // Send a message to be displayed on a client's console
  
  static void NET_SV_SendConsoleMessage(net_client_t *client, const char *s, ...) PRINTF_ATTR(2, 3);
-@@ -307,7 +392,9 @@ static int NET_SV_MaxPlayers(void)
+@@ -307,11 +392,15 @@ static int NET_SV_MaxPlayers(void)
      {
          if (ClientConnected(&clients[i]))
          {
@@ -2075,7 +2099,14 @@ index 9374b64e..44a88111 100644
          }
      }
  
-@@ -498,7 +585,8 @@ static unsigned int NET_SV_LatestAcknowledged(void)
+-    return NET_MAXPLAYERS;
++    // [EiN] as many as the game was hosted for, before anyone plays
++    return ein_hosted && ein_hosted_max_players < NET_MAXPLAYERS
++         ? ein_hosted_max_players : NET_MAXPLAYERS;
+ }
+ 
+ // Returns the number of drones currently connected.
+@@ -498,7 +587,8 @@ static unsigned int NET_SV_LatestAcknowledged(void)
  
      for (i=0; i<MAXNETNODES; ++i) 
      {
@@ -2085,7 +2116,7 @@ index 9374b64e..44a88111 100644
          {
              if (clients[i].acknowledged < lowtic)
              {
-@@ -539,7 +627,8 @@ static void NET_SV_AdvanceWindow(void)
+@@ -539,7 +629,8 @@ static void NET_SV_AdvanceWindow(void)
  
          for (i=0; i<NET_MAXPLAYERS; ++i)
          {
@@ -2095,7 +2126,7 @@ index 9374b64e..44a88111 100644
              {
                  continue;
              }
-@@ -560,6 +649,30 @@ static void NET_SV_AdvanceWindow(void)
+@@ -560,6 +651,30 @@ static void NET_SV_AdvanceWindow(void)
              break;
          }
          
@@ -2126,7 +2157,7 @@ index 9374b64e..44a88111 100644
          // Advance the window
  
          memmove(recvwindow, recvwindow + 1,
-@@ -620,6 +733,7 @@ static void NET_SV_InitNewClient(net_client_t *client, net_addr_t *addr,
+@@ -620,6 +735,7 @@ static void NET_SV_InitNewClient(net_client_t *client, net_addr_t *addr,
      client->acknowledged = 0;
      client->drone = false;
      client->ready = false;
@@ -2134,7 +2165,7 @@ index 9374b64e..44a88111 100644
  
      client->last_gamedata_time = 0;
  
-@@ -723,7 +837,8 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+@@ -723,7 +839,8 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
      // At this point we have received a valid SYN.
  
      // Not accepting new connections?
@@ -2144,7 +2175,7 @@ index 9374b64e..44a88111 100644
      {
          NET_Log("server: error: not in waiting launch state, server_state=%d",
                  server_state);
-@@ -733,7 +848,11 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+@@ -733,7 +850,11 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
      }
  
      // Before accepting a new client, check that there is a slot free.
@@ -2157,7 +2188,7 @@ index 9374b64e..44a88111 100644
      num_players = NET_SV_NumPlayers();
  
      if ((!data.drone && num_players >= NET_SV_MaxPlayers())
-@@ -831,6 +950,32 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+@@ -831,6 +952,32 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
      reply = NET_Conn_NewReliable(&client->connection, NET_PACKET_TYPE_SYN);
      NET_WriteString(reply, PACKAGE_STRING);
      NET_WriteProtocol(reply, protocol);
@@ -2190,7 +2221,7 @@ index 9374b64e..44a88111 100644
  }
  
  // Parse a launch packet. This is sent by the key player when the "start"
-@@ -910,6 +1055,9 @@ static void StartGame(void)
+@@ -910,6 +1057,9 @@ static void StartGame(void)
  
      sv_settings.num_players = NET_SV_NumPlayers();
  
@@ -2200,7 +2231,7 @@ index 9374b64e..44a88111 100644
      // Copy player classes:
  
      for (i = 0; i < NET_MAXPLAYERS; ++i)
-@@ -926,6 +1074,9 @@ static void StartGame(void)
+@@ -926,6 +1076,9 @@ static void StartGame(void)
  
      nowtime = I_GetTimeMS();
  
@@ -2210,7 +2241,7 @@ index 9374b64e..44a88111 100644
      // Send start packets to each connected node
  
      for (i = 0; i < MAXNETNODES; ++i)
-@@ -1000,12 +1151,150 @@ static void SendAllWaitingData(void)
+@@ -1000,12 +1153,150 @@ static void SendAllWaitingData(void)
  
  // Parse a game start packet
  
@@ -2361,7 +2392,7 @@ index 9374b64e..44a88111 100644
      // Can only start a game if we are in the waiting start state.
  
      if (server_state != SERVER_WAITING_START)
-@@ -1024,6 +1313,22 @@ static void NET_SV_ParseGameStart(net_packet_t *packet, net_client_t *client)
+@@ -1024,6 +1315,22 @@ static void NET_SV_ParseGameStart(net_packet_t *packet, net_client_t *client)
              return;
          }
  
@@ -2384,7 +2415,7 @@ index 9374b64e..44a88111 100644
          // Check the game settings are valid
  
          if (!NET_ValidGameSettings(sv_gamemode, sv_gamemission, &settings))
-@@ -1227,6 +1532,12 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
+@@ -1227,6 +1534,12 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
              continue;
          }
  
@@ -2397,7 +2428,7 @@ index 9374b64e..44a88111 100644
          recvobj = &recvwindow[index][player];
          recvobj->active = true;
          recvobj->diff = diff;
-@@ -1261,7 +1572,8 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
+@@ -1261,7 +1574,8 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
      index = resend_end - 1;
      resend_start = resend_end;
      
@@ -2407,7 +2438,7 @@ index 9374b64e..44a88111 100644
      {
          recvobj = &recvwindow[index][player];
  
-@@ -1594,6 +1906,9 @@ static void NET_SV_Packet(net_packet_t *packet, net_addr_t *addr)
+@@ -1594,6 +1908,9 @@ static void NET_SV_Packet(net_packet_t *packet, net_addr_t *addr)
              case NET_PACKET_TYPE_GAMEDATA_RESEND:
                  NET_SV_ParseResendRequest(packet, client);
                  break;
@@ -2417,7 +2448,7 @@ index 9374b64e..44a88111 100644
              default:
                  // unknown packet type
  
-@@ -1642,7 +1957,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+@@ -1642,7 +1959,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
              continue;
          }
  
@@ -2427,7 +2458,7 @@ index 9374b64e..44a88111 100644
          {
              continue;
          }
-@@ -1681,6 +1997,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+@@ -1681,6 +1999,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
      {
          net_client_recv_t *recvobj;
  
@@ -2436,7 +2467,7 @@ index 9374b64e..44a88111 100644
          if (sv_players[i] == client)
          {
              // Not the player we are sending to
-@@ -1689,7 +2007,9 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+@@ -1689,7 +2009,9 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
              continue;
          }
          
@@ -2447,7 +2478,7 @@ index 9374b64e..44a88111 100644
          {
              cmd.playeringame[i] = false;
              continue;
-@@ -1697,6 +2017,11 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+@@ -1697,6 +2019,11 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
  
          cmd.playeringame[i] = true;
  
@@ -2459,7 +2490,7 @@ index 9374b64e..44a88111 100644
          recvobj = &recvwindow[recv_index][i];
  
          cmd.cmds[i] = recvobj->diff;
-@@ -1719,6 +2044,12 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+@@ -1719,6 +2046,12 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
      if (starttic < 0)
          starttic = 0;
  
@@ -2472,7 +2503,7 @@ index 9374b64e..44a88111 100644
      NET_Log("server: send tics %d-%d to %s", starttic, endtic,
              NET_AddrToString(client->addr));
      NET_SV_SendTics(client, starttic, endtic);
-@@ -1760,6 +2091,12 @@ void NET_SV_CheckDeadlock(net_client_t *client)
+@@ -1760,6 +2093,12 @@ void NET_SV_CheckDeadlock(net_client_t *client)
  
          for (i=0; i<BACKUPTICS; ++i)
          {
@@ -2485,7 +2516,7 @@ index 9374b64e..44a88111 100644
              if (!recvwindow[i][client->player_number].active)
              {
                  NET_Log("server: deadlock: sending resend request for %d-%d",
-@@ -1799,6 +2136,7 @@ static void NET_SV_GameEnded(void)
+@@ -1799,6 +2138,7 @@ static void NET_SV_GameEnded(void)
  
      server_state = SERVER_WAITING_LAUNCH;
      sv_gamemode = indetermined;
@@ -2493,7 +2524,7 @@ index 9374b64e..44a88111 100644
  
      for (i=0; i<MAXNETNODES; ++i)
      {
-@@ -1830,8 +2168,20 @@ static void NET_SV_RunClient(net_client_t *client)
+@@ -1830,8 +2170,20 @@ static void NET_SV_RunClient(net_client_t *client)
  
      if (client->connection.state == NET_CONN_STATE_DISCONNECTED)
      {
@@ -2514,7 +2545,7 @@ index 9374b64e..44a88111 100644
          // If we were about to start a game, any player disconnecting
          // should cause an abort.
  
-@@ -1879,7 +2229,8 @@ static void NET_SV_RunClient(net_client_t *client)
+@@ -1879,7 +2231,8 @@ static void NET_SV_RunClient(net_client_t *client)
          }
      }
  
@@ -2524,7 +2555,7 @@ index 9374b64e..44a88111 100644
      {
          NET_SV_PumpSendQueue(client);
          NET_SV_CheckDeadlock(client);
-@@ -2095,3 +2446,76 @@ void NET_SV_Shutdown(void)
+@@ -2095,3 +2448,76 @@ void NET_SV_Shutdown(void)
          I_Sleep(1);
      }
  }
@@ -2687,3 +2718,49 @@ index 2dbd2740..a37bb57f 100644
  }
  
  void NET_WriteWaitData(net_packet_t *packet, net_waitdata_t *data)
+diff --git a/src/v_video.c b/src/v_video.c
+index 210fe4f9..db738fea 100644
+--- a/src/v_video.c
++++ b/src/v_video.c
+@@ -363,6 +363,29 @@ void V_DrawPatch(int x, int y, patch_t *patch)
+     }
+ }
+ 
++// [EiN] V_DrawPatch at `scale` times the patch's size, its offsets
++// scaled with it, at x, y on the 320 by 200 screen: a font's letters
++// drawn larger than they are.
++
++void V_DrawPatchScaled(int x, int y, patch_t *patch, int scale)
++{
++    const fixed_t keep_dx = dx, keep_dxi = dxi, keep_dy = dy, keep_dyi = dyi;
++    const int left = SHORT(patch->leftoffset);
++    const int top = SHORT(patch->topoffset);
++
++    dx *= scale;
++    dy *= scale;
++    dxi /= scale;
++    dyi /= scale;
++    // Where V_DrawPatch puts it at the larger scale is where it is meant.
++    V_DrawPatch((x - left * scale + WIDESCREENDELTA) / scale + left - WIDESCREENDELTA,
++                (y - top * scale) / scale + top, patch);
++    dx = keep_dx;
++    dxi = keep_dxi;
++    dy = keep_dy;
++    dyi = keep_dyi;
++}
++
+ void V_DrawPatchFullScreen(patch_t *patch, boolean flipped)
+ {
+     int x = ((SCREENWIDTH >> crispy->hires) - SHORT(patch->width)) / 2 - WIDESCREENDELTA;
+diff --git a/src/v_video.h b/src/v_video.h
+index e16d5f54..69c7efe6 100644
+--- a/src/v_video.h
++++ b/src/v_video.h
+@@ -65,6 +65,7 @@ void V_DrawAltTLPatch(int x, int y, patch_t * patch);
+ void V_DrawShadowedPatch(int x, int y, patch_t *patch);
+ void V_DrawXlaPatch(int x, int y, patch_t * patch);     // villsa [STRIFE]
+ void V_DrawPatchDirect(int x, int y, patch_t *patch);
++void V_DrawPatchScaled(int x, int y, patch_t *patch, int scale); // [EiN]
+ void V_DrawPatchFullScreen(patch_t *patch, boolean flipped);
+ 
+ // Draw a linear block of pixels into the view buffer.
