@@ -135,6 +135,18 @@ const rank = (name: string) => {
   return at !== -1 ? at : IWADS.length;
 };
 
+/** A map's lump's name: Doom's and Heretic's episodes' `E1M1`, Doom II's and Hexen's levels' `MAP01`. */
+const MAP = /^(E\d+M\d+|MAP\d+)$/;
+
+/** The maps of `wad`, by their lumps' names, in the order they are played: by episode, then by number. */
+function mapsOf(wad: WadDirectory): string[] {
+  const order = (map: string) => map.match(/\d+/g)!.map(Number);
+  return [...wad.lumps.keys()].filter((lump) => MAP.test(lump)).sort((a, b) => {
+    const [x, y] = [order(a), order(b)];
+    return x[0] - y[0] || (x[1] ?? 0) - (y[1] ?? 0);
+  });
+}
+
 /** In `rank`'s order, and by name within it. */
 const byRank = (a: Wad, b: Wad): number => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id);
 
@@ -283,6 +295,9 @@ export async function findWads(cmd: Command): Promise<Game[]> {
     const iwadTitle = (wad: string) => wad.toLowerCase() === 'hexen.wad' ? 'Hexen' : known(wad)?.title ?? wad;
     const played = kind === 'PWAD' ? iwad ? `on ${iwadTitle(iwad)}` : 'no IWAD here for it' : undefined;
     const detail = [title === name ? undefined : name, sizeText(size), played].filter(Boolean).join(' · ');
+    // A PWAD is played on its own maps, and one without any on its IWAD's.
+    const own = mapsOf(directory);
+    const maps = own.length > 0 || !under ? own : mapsOf(under.directory);
     return {
       id: name,
       title,
@@ -295,6 +310,8 @@ export async function findWads(cmd: Command): Promise<Game[]> {
       kind,
       engine,
       ...(iwad ? { iwad } : {}),
+      maps,
+      hostable: maps.length > 0 && (kind === 'IWAD' || under !== undefined),
     };
   }));
   const offered = OFFERS.flatMap((offer) =>

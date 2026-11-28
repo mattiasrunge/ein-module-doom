@@ -27,18 +27,20 @@ RUN git init -q /src/SDL \
 
 # Each game's loop hands its frame to the worker rather than running forever (loop.patch); Doom
 # calls each state's action with as many arguments as it takes, which WebAssembly holds it to
-# (actions.patch).
-COPY loop.patch actions.patch /src/
-RUN git -C /src/crispy apply /src/loop.patch /src/actions.patch
+# (actions.patch); and the games are played together on servers EiN hosts, joined from the page or
+# the game's own menu, a game under way too, which its new player plays through to where the others
+# are first (multiplayer.patch).
+COPY loop.patch actions.patch multiplayer.patch /src/
+RUN git -C /src/crispy apply /src/loop.patch /src/actions.patch /src/multiplayer.patch
 
 WORKDIR /src
-COPY config.h ein_main.c ein_video.c ein_sound.c ein_sdl.c ein_stubs.c opl_ein.c ein/
+COPY config.h ein_main.c ein_net.c ein_server.c ein_video.c ein_sound.c ein_sdl.c ein_stubs.c net_ein.c opl_ein.c ein/
 COPY build.sh ./
 
 # Two compilers at a time keep the build's memory small beside a running EiN.
 ENV EMCC_CORES=2
 RUN sh build.sh /out \
-  && echo "Crispy Doom 7.2 (${CRISPY_DOOM_COMMIT}) with loop.patch and actions.patch, SDL ${SDL_COMMIT}'s headers, emsdk 6.0.13" > /out/doom-build.txt
+  && echo "Crispy Doom 7.2 (${CRISPY_DOOM_COMMIT}) with loop.patch, actions.patch and multiplayer.patch, SDL ${SDL_COMMIT}'s headers, emsdk 6.0.13" > /out/doom-build.txt
 
 FROM scratch
 COPY --from=build /out/ /

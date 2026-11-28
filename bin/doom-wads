@@ -25,7 +25,7 @@ doomWads.spec = {
   flags: [],
   examples: ['doom-wads'],
   returns:
-    'One entry per WAD. One in the folder: its id (the file\'s name), title, state installed, path, detail, size in bytes, cover (its title screen as a PNG data: URL), kind (IWAD or PWAD), engine (doom, heretic or hexen: the game it is played on) and iwad (the IWAD a PWAD is played with). A WAD of Strife is left out. One offered: its id, title, state offered, about and download (bytes).',
+    'One entry per WAD. One in the folder: its id (the file\'s name), title, state installed, path, detail, size in bytes, cover (its title screen as a PNG data: URL), kind (IWAD or PWAD), engine (doom, heretic or hexen: the game it is played on), iwad (the IWAD a PWAD is played with), maps (its maps by their lumps\' names, a PWAD\'s own or its IWAD\'s) and hostable (whether it can be hosted for others to join). A WAD of Strife is left out. One offered: its id, title, state offered, about and download (bytes).',
 };
 
 export default doomWads;

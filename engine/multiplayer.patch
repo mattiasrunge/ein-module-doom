@@ -1,0 +1,2687 @@
+diff --git a/src/d_loop.c b/src/d_loop.c
+index 8419a9bb..420953b8 100644
+--- a/src/d_loop.c
++++ b/src/d_loop.c
+@@ -46,14 +46,10 @@ typedef struct
+ {
+     ticcmd_t cmds[NET_MAXPLAYERS];
+     boolean ingame[NET_MAXPLAYERS];
++    // [EiN] who joins the game at this tic (net_full_ticcmd_t's joined)
++    int joined[NET_MAXPLAYERS];
+ } ticcmd_set_t;
+ 
+-// Maximum time that we wait in TryRunTics() for netgame data to be
+-// received before we bail out and render a frame anyway.
+-// Vanilla Doom used 20 for this value, but we use a smaller value
+-// instead for better responsiveness of the menu when we're stuck.
+-#define MAX_NETGAME_STALL_TICS  5
+-
+ //
+ // gametic is the tic about to (or currently being) run
+ // maketic is the tic that hasn't had control made for it yet
+@@ -120,6 +116,17 @@ static boolean local_playeringame[NET_MAXPLAYERS];
+ 
+ static int player_class;
+ 
++// [EiN] Who joins the game at the tic being run, by their class plus
++// one, for the game's RunTic: a player in a tic who was not in the one
++// before has joined.
++
++const int *ein_joined = NULL;
++
++// [EiN] Whether the tics being run are those a joining player plays
++// through before their own: nothing of them is heard, shown or saved.
++
++boolean ein_replaying = false;
++
+ 
+ // 35 fps clock adjusted by offsetms milliseconds
+ 
+@@ -191,6 +198,7 @@ static boolean BuildNewTic(void)
+ 
+     ticdata[maketic % BACKUPTICS].cmds[localplayer] = cmd;
+     ticdata[maketic % BACKUPTICS].ingame[localplayer] = true;
++    ticdata[maketic % BACKUPTICS].joined[localplayer] = 0;
+ 
+     ++maketic;
+ 
+@@ -268,7 +276,7 @@ static void D_Disconnected(void)
+ // available.
+ //
+ 
+-void D_ReceiveTic(ticcmd_t *ticcmds, boolean *players_mask)
++void D_ReceiveTic(ticcmd_t *ticcmds, boolean *players_mask, int *joined)
+ {
+     int i;
+ 
+@@ -290,6 +298,7 @@ void D_ReceiveTic(ticcmd_t *ticcmds, boolean *players_mask)
+         {
+             ticdata[recvtic % BACKUPTICS].cmds[i] = ticcmds[i];
+             ticdata[recvtic % BACKUPTICS].ingame[i] = players_mask[i];
++            ticdata[recvtic % BACKUPTICS].joined[i] = joined[i];
+         }
+     }
+ 
+@@ -775,17 +784,12 @@ void TryRunTics (void)
+ 	    I_Error ("TryRunTics: lowtic < gametic");
+ 
+         // Still no tics to run? Sleep until some are available.
++        // [EiN] Nothing comes while this waits: the worker hands the game
++        // what the network brought between frames, so the frame goes on
++        // without a tic.
+         if (lowtic < gametic/ticdup + counts)
+         {
+-            // If we're in a netgame, we might spin forever waiting for
+-            // new network data to be received. So don't stay in here
+-            // forever - give the menu a chance to work.
+-            if (I_GetTime() / ticdup - entertic >= MAX_NETGAME_STALL_TICS)
+-            {
+-                return;
+-            }
+-
+-            I_Sleep(1);
++            return;
+         }
+     }
+ 
+@@ -813,7 +817,9 @@ void TryRunTics (void)
+ 
+             memcpy(local_playeringame, set->ingame, sizeof(local_playeringame));
+ 
++            ein_joined = set->joined;
+             loop_interface->RunTic(set->cmds, set->ingame);
++            ein_joined = NULL;
+ 	    gametic++;
+ 
+ 	    // modify command for duplicated tics
+@@ -825,6 +831,81 @@ void TryRunTics (void)
+     }
+ }
+ 
++// [EiN] What a game EiN hosts starts the game with, as D_StartNetGame
++// has it before it sends it: the server's own settings take its place.
++
++void D_EIN_GameSettings(net_gamesettings_t *settings)
++{
++    int i;
++
++    settings->consoleplayer = 0;
++    settings->num_players = 1;
++    settings->player_classes[0] = player_class;
++    settings->new_sync = !M_ParmExists("-oldsync");
++
++    i = M_CheckParmWithArgs("-extratics", 1);
++    settings->extratics = i > 0 ? atoi(myargv[i+1]) : 1;
++    settings->ticdup = 1;
++}
++
++// [EiN] The server has sent the game's start: the tics it sends from
++// now on are the game's from `first` on, its first or this player's
++// join tic, as are those this player makes. Called as the start comes,
++// before any tic that came with it is taken.
++
++void D_EIN_BeginTics(int first)
++{
++    memset(ticdata, 0, sizeof(ticdata));
++    maketic = first;
++    recvtic = first;
++}
++
++// [EiN] The game the server started for this player begins, from its
++// first tic, as D_StartNetGame begins it once the server has sent it,
++// with `class` the player's class. A player who joins it while it is
++// played plays the tics before their join tic through first
++// (D_EIN_PlayTic).
++
++void D_EIN_StartNetGame(net_gamesettings_t *settings, int class)
++{
++    int i;
++
++    player_class = class;
++    localplayer = settings->consoleplayer;
++
++    for (i = 0; i < NET_MAXPLAYERS; ++i)
++    {
++        local_playeringame[i] = i < settings->num_players;
++    }
++
++    ticdup = settings->ticdup;
++    new_sync = settings->new_sync;
++    offsetms = 0;
++    skiptics = 0;
++    gametic = 0;
++    lasttime = GetAdjustedTime() / ticdup;
++}
++
++// [EiN] Run a tic played before this player joined, with every player's
++// ticcmd, whether they are in it and whether they join at it.
++
++void D_EIN_PlayTic(ticcmd_t *cmds, boolean *ingame, int *joined)
++{
++    memcpy(local_playeringame, ingame, sizeof(local_playeringame));
++    ein_joined = joined;
++    loop_interface->RunTic(cmds, ingame);
++    ein_joined = NULL;
++    ++gametic;
++}
++
++// [EiN] Every tic before the join tic has been played: the player's own
++// tics are made from now on, none for the time it took.
++
++void D_EIN_Play(void)
++{
++    lasttime = GetAdjustedTime() / ticdup;
++}
++
+ void D_RegisterLoopCallbacks(loop_interface_t *i)
+ {
+     loop_interface = i;
+diff --git a/src/d_loop.h b/src/d_loop.h
+index f96e5f39..5683b88a 100644
+--- a/src/d_loop.h
++++ b/src/d_loop.h
+@@ -87,7 +87,18 @@ boolean D_NonVanillaRecord(boolean conditional, const char *feature);
+ boolean D_NonVanillaPlayback(boolean conditional, int lumpnum,
+                              const char *feature);
+ 
+-void D_ReceiveTic(ticcmd_t *ticcmds, boolean *playeringame);
++void D_ReceiveTic(ticcmd_t *ticcmds, boolean *playeringame, int *joined);
++
++// [EiN] a game EiN hosts, and joining it while it is played
++
++extern const int *ein_joined;
++extern boolean ein_replaying;
++
++void D_EIN_GameSettings(net_gamesettings_t *settings);
++void D_EIN_BeginTics(int first);
++void D_EIN_StartNetGame(net_gamesettings_t *settings, int class);
++void D_EIN_PlayTic(ticcmd_t *cmds, boolean *ingame, int *joined);
++void D_EIN_Play(void);
+ 
+ 
+ extern fixed_t offsetms;
+diff --git a/src/d_mode.c b/src/d_mode.c
+index a7c9c668..450241ee 100644
+--- a/src/d_mode.c
++++ b/src/d_mode.c
+@@ -44,6 +44,7 @@ static struct
+     { heretic,   registered, 3, 9 },
+     { heretic,   retail,     5, 9 },
+     { hexen,     commercial, 1, 60 },
++    { hexen,     shareware,  1, 60 }, // [EiN] the demo, whose four maps are numbered as the full game's
+     { strife,    commercial, 1, 34 },
+ };
+ 
+diff --git a/src/doom/d_net.c b/src/doom/d_net.c
+index 4da8004a..5421b8a8 100644
+--- a/src/doom/d_net.c
++++ b/src/doom/d_net.c
+@@ -68,11 +68,45 @@ static void PlayerQuitGame(player_t *player)
+     }
+ }
+ 
++// [EiN] Called when a player joins the game while it is played: they
++// are reborn at the start of the tic as a player who came back after
++// dying would be, with nothing of whoever played from their place
++// before, whose body stays where it fell.
++
++static void PlayerJoinGame(int player_num)
++{
++    static char joinmsg[80];
++    player_t *player = &players[player_num];
++
++    M_StringCopy(joinmsg, DEH_String("Player 1 joined the game"),
++                 sizeof(joinmsg));
++    joinmsg[7] += player_num;
++
++    if (player->mo != NULL)
++    {
++        player->mo->player = NULL;
++    }
++
++    memset(player, 0, sizeof(*player));
++    playeringame[player_num] = true;
++    player->playerstate = PST_REBORN;
++
++    if (player_num == consoleplayer)
++    {
++        displayplayer = consoleplayer;
++    }
++    else
++    {
++        players[consoleplayer].message = joinmsg;
++    }
++}
++
+ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+ {
+     unsigned int i;
+ 
+     // Check for player quits.
++    // [EiN] and joins
+ 
+     for (i = 0; i < MAXPLAYERS; ++i)
+     {
+@@ -80,6 +114,10 @@ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+         {
+             PlayerQuitGame(&players[i]);
+         }
++        else if (!demoplayback && !playeringame[i] && ingame[i])
++        {
++            PlayerJoinGame(i);
++        }
+     }
+ 
+     netcmds = cmds;
+@@ -220,6 +258,53 @@ static void InitConnectData(net_connect_data_t *connect_data)
+     connect_data->is_freedoom = W_CheckNumForName("FREEDOOM") >= 0;
+ }
+ 
++// [EiN] A game EiN hosts (ein_net.c): what this player connects with,
++// what they ask to start it with (the server's own settings take its
++// place), and the game starting as the server sent it, from whatever
++// was on before: the title's demos, or a game alone.
++
++void EIN_ConnectData(net_connect_data_t *connect_data)
++{
++    InitConnectData(connect_data);
++}
++
++void EIN_SaveGameSettings(net_gamesettings_t *settings)
++{
++    SaveGameSettings(settings);
++}
++
++void EIN_StartNetGame(net_gamesettings_t *settings)
++{
++    extern byte consistancy[MAXPLAYERS][BACKUPTICS];
++    int i;
++
++    if (demoplayback)
++    {
++        G_CheckDemoStatus();
++    }
++
++    advancedemo = false;
++    gameaction = ga_nothing;
++    menuactive = false;
++    netgame = true;
++    autostart = true;
++    LoadGameSettings(settings);
++
++    // Every game's checks start from nothing, whatever was played here
++    // before.
++    memset(consistancy, 0, sizeof(consistancy));
++
++    // Whoever joins while the game is played watches the first player
++    // in it until their own place is.
++    displayplayer = consoleplayer;
++    for (i = 0; i < MAXPLAYERS && !playeringame[displayplayer]; ++i)
++    {
++        displayplayer = i;
++    }
++
++    G_InitNew(startskill, startepisode, startmap);
++}
++
+ void D_ConnectNetGame(void)
+ {
+     net_connect_data_t connect_data;
+diff --git a/src/doom/g_game.c b/src/doom/g_game.c
+index f7f7f42d..057cc8e6 100644
+--- a/src/doom/g_game.c
++++ b/src/doom/g_game.c
+@@ -82,6 +82,7 @@
+ #include "memio.h"
+ 
+ #include "d_pwad.h" // [crispy] kex secret level
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ #define SAVEGAMESIZE	0x2c000
+ 
+@@ -1142,6 +1143,8 @@ void G_DoLoadLevel (void)
+     }
+ 
+     P_SetupLevel (gameepisode, gamemap, 0, gameskill);    
++    // [EiN] one who joins the game watches someone in it until they are
++    if (playeringame[consoleplayer])
+     displayplayer = consoleplayer;		// view the guy you are playing    
+     gameaction = ga_nothing; 
+     Z_CheckHeap ();
+@@ -1595,7 +1598,8 @@ void G_Ticker (void)
+ 					 
+ 		  case BTS_SAVEGAME: 
+ 		    // [crispy] never override savegames by demo playback
+-		    if (demoplayback)
++		    // [EiN] nor by the tics a joining player plays through
++		    if (demoplayback || ein_replaying)
+ 			break;
+ 		    if (!savedescription[0]) 
+                     {
+@@ -1640,6 +1644,9 @@ void G_Ticker (void)
+     { 
+       case GS_LEVEL: 
+ 	P_Ticker (); 
++	// [EiN] what this player sees waits until they play
++	if (ein_replaying)
++	    break;
+ 	ST_Ticker (); 
+ 	AM_Ticker (); 
+ 	HU_Ticker ();            
+@@ -1922,6 +1929,8 @@ void G_DoReborn (int playernum)
+ 	// respawn at the start
+ 
+ 	// first dissasociate the corpse 
++	// [EiN] a player who joined has none
++	if (players[playernum].mo)
+ 	players[playernum].mo->player = NULL;   
+ 		 
+ 	// spawn at random spot if in death match 
+diff --git a/src/doom/m_menu.c b/src/doom/m_menu.c
+index 919258a5..7c409846 100644
+--- a/src/doom/m_menu.c
++++ b/src/doom/m_menu.c
+@@ -244,6 +244,7 @@ static void M_QuickSave(void);
+ static void M_QuickLoad(void);
+ 
+ static void M_DrawMainMenu(void);
++static void M_EIN_JoinGame(int choice);
+ static void M_DrawReadThis1(void);
+ static void M_DrawReadThis2(void);
+ static void M_DrawNewGame(void);
+@@ -283,6 +284,7 @@ enum
+     options,
+     loadgame,
+     savegame,
++    joingame, // [EiN]
+     readthis,
+     quitdoom,
+     main_end
+@@ -294,6 +296,8 @@ menuitem_t MainMenu[]=
+     {1,"M_OPTION",M_Options,'o'},
+     {1,"M_LOADG",M_LoadGame,'l'},
+     {1,"M_SAVEG",M_SaveGame,'s'},
++    // [EiN] no picture: M_DrawMainMenu writes it
++    {1,"",M_EIN_JoinGame,'j'},
+     // Another hickup with Special edition.
+     {1,"M_RDTHIS",M_ReadThis,'r'},
+     {1,"M_QUITG",M_QuitDOOM,'q'}
+@@ -1288,11 +1292,108 @@ void M_MusicVol(int choice)
+ //
+ void M_DrawMainMenu(void)
+ {
++    int i;
++
+     // [crispy] force status bar refresh
+     inhelpscreens = true;
+ 
+     V_DrawPatchDirect(94, 2,
+                       W_CacheLumpName(DEH_String("M_DOOM"), PU_CACHE));
++
++    // [EiN] Join Game, which has no picture of its own
++    for (i = 0; i < MainDef.numitems; ++i)
++    {
++        if (MainMenu[i].routine == M_EIN_JoinGame)
++        {
++            M_WriteText(MainDef.x, MainDef.y + LINEHEIGHT * i + 8
++                        - M_StringHeight("Join Game") / 2, "Join Game");
++        }
++    }
++}
++
++//
++// [EiN] Join Game: the games EiN hosts for this game, as its search finds
++// them (ein_net.c), a line each; choosing one joins it. Until there is
++// one, the only line says the search goes on.
++//
++
++#define EIN_MAX_FOUND 8
++
++boolean EIN_CanJoin(void);
++void EIN_Search(void);
++int EIN_Found(void);
++const char *EIN_FoundLine(int i);
++void EIN_JoinFound(int i);
++
++static void M_EIN_DrawJoin(void);
++static void M_EIN_Join(int choice);
++
++static menuitem_t EIN_JoinMenu[EIN_MAX_FOUND] =
++{
++    {1,"",M_EIN_Join,0}, {1,"",M_EIN_Join,0}, {1,"",M_EIN_Join,0},
++    {1,"",M_EIN_Join,0}, {1,"",M_EIN_Join,0}, {1,"",M_EIN_Join,0},
++    {1,"",M_EIN_Join,0}, {1,"",M_EIN_Join,0},
++};
++
++static menu_t EIN_JoinDef =
++{
++    1,
++    &MainDef,
++    EIN_JoinMenu,
++    M_EIN_DrawJoin,
++    72,48,
++    0
++};
++
++static void M_EIN_JoinGame(int choice)
++{
++    if (netgame)
++    {
++        M_StartMessage("You are playing a game\nwith others already.\n\n"
++                       PRESSKEY, NULL, false);
++        return;
++    }
++
++    M_SetupNextMenu(&EIN_JoinDef);
++}
++
++static void M_EIN_DrawJoin(void)
++{
++    int i;
++    int found;
++
++    EIN_Search();
++    found = EIN_Found();
++    EIN_JoinDef.numitems = found > 0 ? found : 1;
++    if (itemOn >= EIN_JoinDef.numitems)
++    {
++        itemOn = EIN_JoinDef.numitems - 1;
++    }
++
++    M_WriteText((ORIGWIDTH - M_StringWidth("Join Game")) / 2, 24,
++                "Join Game");
++
++    if (found == 0)
++    {
++        M_WriteText(EIN_JoinDef.x, EIN_JoinDef.y + 4,
++                    "Looking for games...");
++        return;
++    }
++
++    for (i = 0; i < found; ++i)
++    {
++        M_WriteText(EIN_JoinDef.x, EIN_JoinDef.y + LINEHEIGHT * i + 4,
++                    EIN_FoundLine(i));
++    }
++}
++
++static void M_EIN_Join(int choice)
++{
++    if (choice < EIN_Found())
++    {
++        EIN_JoinFound(choice);
++        M_ClearMenus();
++    }
+ }
+ 
+ 
+@@ -2056,6 +2157,16 @@ M_StartMessage
+ //
+ // Find string width from hu_font chars
+ //
++// [EiN] What joining a game EiN hosts is at (ein_net.c), on a black
++// screen in place of the game's frame.
++
++void EIN_DrawStatus(const char *text)
++{
++    V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, 0);
++    M_WriteText((ORIGWIDTH - M_StringWidth(text)) / 2,
++                (ORIGHEIGHT - M_StringHeight(text)) / 2, text);
++}
++
+ int M_StringWidth(const char *string)
+ {
+     size_t             i;
+@@ -3352,9 +3463,24 @@ void M_Init (void)
+         ReadDef2.y -= 10;
+     }
+ 
++    // [EiN] Join Game only where the page gives the game a network
++    if (!EIN_CanJoin())
++    {
++        int i;
++
++        for (i = joingame; i < main_end - 1; ++i)
++        {
++            MainMenu[i] = MainMenu[i + 1];
++        }
++        MainDef.numitems--;
++    }
++
+     if (gamemode == commercial)
+     {
+-        MainMenu[readthis] = MainMenu[quitdoom];
++        // [EiN] Read This is one place up without Join Game
++        int at = EIN_CanJoin() ? readthis : readthis - 1;
++
++        MainMenu[at] = MainMenu[at + 1];
+         MainDef.numitems--;
+         MainDef.y += 8;
+         NewDef.prevMenu = &MainDef;
+diff --git a/src/doom/s_sound.c b/src/doom/s_sound.c
+index f49e2041..1851447b 100644
+--- a/src/doom/s_sound.c
++++ b/src/doom/s_sound.c
+@@ -39,6 +39,7 @@
+ #include "z_zone.h"
+ #include "g_game.h" // [crispy] demo_gotonextlvl
+ #include "d_pwad.h" // [crispy] masterlevel kex music (MLK)
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ // when to clip out sounds
+ // Does not fit the large outdoor areas.
+@@ -712,6 +713,12 @@ void S_StartSound(void *origin_p, int sfx_id)
+     int cnum;
+     int volume;
+ 
++    // [EiN] the tics a joining player plays through are silent
++    if (ein_replaying)
++    {
++        return;
++    }
++
+     origin = (mobj_t *) origin_p;
+     volume = snd_SfxVolume;
+ 
+diff --git a/src/heretic/d_net.c b/src/heretic/d_net.c
+index c30ac4e7..fa3196df 100644
+--- a/src/heretic/d_net.c
++++ b/src/heretic/d_net.c
+@@ -65,11 +65,43 @@ static void PlayerQuitGame(player_t *player)
+     }
+ }
+ 
++// [EiN] Called when a player joins the game while it is played: they
++// are reborn at the start of the tic as a player who came back after
++// dying would be, with nothing of whoever played from their place
++// before, whose body stays where it fell.
++
++static void PlayerJoinGame(int player_num)
++{
++    static char joinmsg[80];
++    player_t *player = &players[player_num];
++
++    M_StringCopy(joinmsg, "PLAYER 1 JOINED THE GAME", sizeof(joinmsg));
++    joinmsg[7] += player_num;
++
++    if (player->mo != NULL)
++    {
++        player->mo->player = NULL;
++    }
++
++    memset(player, 0, sizeof(*player));
++    playeringame[player_num] = true;
++    player->playerstate = PST_REBORN;
++    if (player_num == consoleplayer)
++    {
++        displayplayer = consoleplayer;
++    }
++    else
++    {
++        players[consoleplayer].message = joinmsg;
++    }
++}
++
+ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+ {
+     unsigned int i;
+ 
+     // Check for player quits.
++    // [EiN] and joins
+ 
+     for (i = 0; i < MAXPLAYERS; ++i)
+     {
+@@ -77,6 +109,10 @@ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+         {
+             PlayerQuitGame(&players[i]);
+         }
++        else if (!demoplayback && !playeringame[i] && ingame[i])
++        {
++            PlayerJoinGame(i);
++        }
+     }
+ 
+     netcmds = cmds;
+@@ -177,6 +213,53 @@ static void InitConnectData(net_connect_data_t *connect_data)
+     connect_data->is_freedoom = 0;
+ }
+ 
++// [EiN] A game EiN hosts (ein_net.c): what this player connects with,
++// what they ask to start it with (the server's own settings take its
++// place), and the game starting as the server sent it, from whatever
++// was on before: the title's demos, or a game alone.
++
++void EIN_ConnectData(net_connect_data_t *connect_data)
++{
++    InitConnectData(connect_data);
++}
++
++void EIN_SaveGameSettings(net_gamesettings_t *settings)
++{
++    SaveGameSettings(settings);
++}
++
++void EIN_StartNetGame(net_gamesettings_t *settings)
++{
++    extern byte consistancy[MAXPLAYERS][BACKUPTICS];
++    int i;
++
++    if (demoplayback)
++    {
++        G_CheckDemoStatus();
++    }
++
++    advancedemo = false;
++    gameaction = ga_nothing;
++    MN_DeactivateMenu();
++    netgame = true;
++    autostart = true;
++    LoadGameSettings(settings);
++
++    // Every game's checks start from nothing, whatever was played here
++    // before.
++    memset(consistancy, 0, sizeof(consistancy));
++
++    // Whoever joins while the game is played watches the first player
++    // in it until their own place is.
++    displayplayer = consoleplayer;
++    for (i = 0; i < MAXPLAYERS && !playeringame[displayplayer]; ++i)
++    {
++        displayplayer = i;
++    }
++
++    G_InitNew(startskill, startepisode, startmap);
++}
++
+ void D_ConnectNetGame(void)
+ {
+     net_connect_data_t connect_data;
+diff --git a/src/heretic/g_game.c b/src/heretic/g_game.c
+index d22415fb..5508d7b7 100644
+--- a/src/heretic/g_game.c
++++ b/src/heretic/g_game.c
+@@ -38,6 +38,7 @@
+ #include "deh_main.h" // [crispy] for demo footer
+ #include "memio.h"
+ #include "p_extsaveg.h" // [crispy] for extended savegame information
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ // Macros
+ 
+@@ -1081,6 +1082,8 @@ void G_DoLoadLevel(void)
+     }
+ 
+     P_SetupLevel(gameepisode, gamemap, 0, gameskill);
++    // [EiN] one who joins the game watches someone in it until they are
++    if (playeringame[consoleplayer])
+     displayplayer = consoleplayer;      // view the guy you are playing
+     gameaction = ga_nothing;
+     Z_CheckHeap();
+@@ -1582,6 +1585,11 @@ void G_Ticker(void)
+                         break;
+ 
+                     case BTS_SAVEGAME:
++                        // [EiN] not by the tics a joining player plays through
++                        if (ein_replaying)
++                        {
++                            break;
++                        }
+                         if (!savedescription[0])
+                         {
+                             if (netgame)
+@@ -1627,6 +1635,11 @@ void G_Ticker(void)
+         case GS_LEVEL:
+             P_Ticker();
+             SB_Ticker();
++            // [EiN] what this player sees waits until they play
++            if (ein_replaying)
++            {
++                break;
++            }
+             AM_Ticker();
+             CT_Ticker();
+             break;
+@@ -1884,6 +1897,8 @@ void G_DoReborn(int playernum)
+         gameaction = ga_loadlevel;      // reload the level from scratch
+     else
+     {                           // respawn at the start
++        // [EiN] a player who joined has none
++        if (players[playernum].mo)
+         players[playernum].mo->player = NULL;   // dissasociate the corpse
+ 
+         // spawn at random spot if in death match
+diff --git a/src/heretic/mn_menu.c b/src/heretic/mn_menu.c
+index b4a2836d..2fb5a2c6 100644
+--- a/src/heretic/mn_menu.c
++++ b/src/heretic/mn_menu.c
+@@ -39,6 +39,7 @@
+ #include "v_trans.h" // [crispy] dp_translation
+ 
+ #include "crispy.h"
++#include "net_io.h" // [EiN]
+ 
+ // Macros
+ 
+@@ -78,6 +79,7 @@ typedef enum
+     MENU_CRISPNESS1,
+     MENU_CRISPNESS2,
+     MENU_CRISPNESS3,
++    MENU_EIN_JOIN, // [EiN]
+     MENU_NONE
+ } MenuType_t;
+ 
+@@ -112,6 +114,44 @@ typedef struct
+ 
+ static void InitFonts(void);
+ static void SetMenu(MenuType_t menu);
++
++// [EiN] Join Game: the games EiN hosts for this game, as its search finds
++// them (ein_net.c), a line each; choosing one joins it. Until
++// there is one, the only line says the search goes on.
++
++#define EIN_MAX_FOUND 8
++
++boolean EIN_CanJoin(void);
++void EIN_Search(void);
++int EIN_Found(void);
++const char *EIN_FoundLine(int i);
++void EIN_JoinFound(int i);
++
++
++static boolean SCEinJoinGame(int option);
++static boolean SCEinJoin(int option);
++static void DrawEinJoinMenu(void);
++
++static char EinJoinLines[EIN_MAX_FOUND][48];
++
++static MenuItem_t EinJoinItems[EIN_MAX_FOUND] = {
++    {ITT_EFUNC, EinJoinLines[0], SCEinJoin, 0, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[1], SCEinJoin, 1, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[2], SCEinJoin, 2, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[3], SCEinJoin, 3, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[4], SCEinJoin, 4, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[5], SCEinJoin, 5, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[6], SCEinJoin, 6, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[7], SCEinJoin, 7, MENU_NONE},
++};
++
++static Menu_t EinJoinMenu = {
++    38, 40,
++    DrawEinJoinMenu,
++    1, EinJoinItems,
++    0,
++    MENU_MAIN
++};
+ static boolean SCNetCheck(int option);
+ static boolean SCQuitGame(int option);
+ static boolean SCEpisode(int option);
+@@ -222,13 +262,14 @@ static MenuItem_t MainItems[] = {
+     {ITT_SETMENU, "OPTIONS", NULL, 0, MENU_OPTIONS},
+     {ITT_SETMENU, "GAME FILES", NULL, 0, MENU_FILES},
+     {ITT_EFUNC, "INFO", SCInfo, 0, MENU_NONE},
++    {ITT_EFUNC, "JOIN GAME", SCEinJoinGame, 0, MENU_NONE}, // [EiN]
+     {ITT_EFUNC, "QUIT GAME", SCQuitGame, 0, MENU_NONE}
+ };
+ 
+ static Menu_t MainMenu = {
+     110, 56,
+     DrawMainMenu,
+-    5, MainItems,
++    6, MainItems,
+     0,
+     MENU_NONE
+ };
+@@ -571,6 +612,7 @@ static Menu_t *Menus[] = {
+     &Crispness1Menu,
+     &Crispness2Menu,
+     &Crispness3Menu,
++    &EinJoinMenu, // [EiN]
+ };
+ 
+ // [crispy] gamma correction messages
+@@ -659,6 +701,14 @@ static int G_GotoNextLevel(void)
+ void MN_Init(void)
+ {
+     InitFonts();
++
++    // [EiN] Join Game only where the page gives the game a network
++    if (!EIN_CanJoin())
++    {
++        MainItems[4] = MainItems[5];
++        MainMenu.itemCount = 5;
++    }
++
+     MenuActive = false;
+     messageson = true;
+     SkullBaseLump = W_GetNumForName(DEH_String("M_SKL00"));
+@@ -2865,6 +2915,101 @@ void MN_ActivateMenu(void)
+ //
+ //---------------------------------------------------------------------------
+ 
++// [EiN] What joining a game EiN hosts is at (ein_net.c), a line at a
++// time, on a black screen in place of the game's frame.
++
++void EIN_DrawStatus(const char *text)
++{
++    char line[160];
++    const char *at = text;
++    int lines = 1;
++    int y;
++
++    for (; *at != '\0'; ++at)
++    {
++        lines += *at == '\n';
++    }
++
++    V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, 0);
++    y = (ORIGHEIGHT - lines * 10) / 2;
++
++    for (at = text; ; y += 10)
++    {
++        const char *end = strchr(at, '\n');
++        size_t length = end != NULL ? (size_t) (end - at) : strlen(at);
++
++        if (length >= sizeof(line))
++        {
++            length = sizeof(line) - 1;
++        }
++        memcpy(line, at, length);
++        line[length] = '\0';
++        MN_DrTextA(line, (ORIGWIDTH - MN_TextAWidth(line)) / 2, y);
++
++        if (end == NULL)
++        {
++            break;
++        }
++        at = end + 1;
++    }
++}
++
++static boolean SCEinJoinGame(int option)
++{
++    if (netgame)
++    {
++        P_SetMessage(&players[consoleplayer],
++                     "YOU ARE PLAYING A GAME WITH OTHERS ALREADY", true);
++        return true;
++    }
++
++    SetMenu(MENU_EIN_JOIN);
++    return true;
++}
++
++static boolean SCEinJoin(int option)
++{
++    if (option < EIN_Found())
++    {
++        MN_DeactivateMenu();
++        EIN_JoinFound(option);
++    }
++    return true;
++}
++
++static void DrawEinJoinMenu(void)
++{
++    int found;
++    int i;
++
++    EIN_Search();
++    found = EIN_Found();
++
++    for (i = 0; i < found; ++i)
++    {
++        char *c;
++
++        M_StringCopy(EinJoinLines[i], EIN_FoundLine(i), sizeof(EinJoinLines[i]));
++        for (c = EinJoinLines[i]; *c != '\0'; ++c)
++        {
++            *c = toupper(*c);
++        }
++    }
++
++    if (found == 0)
++    {
++        M_StringCopy(EinJoinLines[0], "LOOKING FOR GAMES...", sizeof(EinJoinLines[0]));
++    }
++
++    EinJoinMenu.itemCount = found > 0 ? found : 1;
++    if (CurrentItPos >= EinJoinMenu.itemCount)
++    {
++        CurrentItPos = EinJoinMenu.itemCount - 1;
++    }
++
++    MN_DrTextB("JOIN GAME", 160 - MN_TextBWidth("JOIN GAME") / 2, 10);
++}
++
+ void MN_DeactivateMenu(void)
+ {
+     if (CurrentMenu != NULL)
+diff --git a/src/heretic/s_sound.c b/src/heretic/s_sound.c
+index 9d643aa5..5de6da4d 100644
+--- a/src/heretic/s_sound.c
++++ b/src/heretic/s_sound.c
+@@ -29,6 +29,7 @@
+ 
+ #include "w_wad.h"
+ #include "z_zone.h"
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ /*
+ ===============================================================================
+@@ -134,6 +135,12 @@ void S_StartSound(void *_origin, int sound_id)
+     mobj_t *origin = _origin;
+     mobj_t *listener;
+     int dist, vol;
++
++    // [EiN] the tics a joining player plays through are silent
++    if (ein_replaying)
++    {
++        return;
++    }
+     int i;
+     int priority;
+     int sep;
+@@ -332,6 +339,12 @@ void S_StartSoundAtVolume(void *_origin, int sound_id, int volume)
+     mobj_t *listener;
+     int i;
+ 
++    // [EiN] the tics a joining player plays through are silent
++    if (ein_replaying)
++    {
++        return;
++    }
++
+     listener = GetSoundListener();
+ 
+     if (sound_id == 0 || snd_MaxVolume == 0 || (nodrawers && singletics))
+diff --git a/src/heretic/sb_bar.c b/src/heretic/sb_bar.c
+index 1b720dfe..0a8180e8 100644
+--- a/src/heretic/sb_bar.c
++++ b/src/heretic/sb_bar.c
+@@ -30,6 +30,7 @@
+ #include "am_map.h"
+ #include "v_trans.h" // [crispy] dp_translation & blend truecolor
+ #include "a11y.h" // [crispy] A11Y
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ // Types
+ 
+@@ -335,6 +336,15 @@ void SB_Ticker(void)
+     {
+         ChainWiggle = P_Random() & 1;
+     }
++
++    // [EiN] The chain wiggles by the game's own random numbers, so every
++    // player's does as they play the same tics; the rest is what this
++    // player sees, which waits until they play.
++    if (ein_replaying)
++    {
++        return;
++    }
++
+     curHealth = players[consoleplayer].mo->health;
+     if (curHealth < 0)
+     {
+diff --git a/src/hexen/d_net.c b/src/hexen/d_net.c
+index 25291472..360cfd68 100644
+--- a/src/hexen/d_net.c
++++ b/src/hexen/d_net.c
+@@ -36,6 +36,9 @@
+ 
+ ticcmd_t *netcmds;
+ 
++// [EiN] the class this player joins a game EiN hosts with (ein_net.c)
++int EIN_PlayerClass(void);
++
+ 
+ // Called when a player leaves the game
+ 
+@@ -61,11 +64,46 @@ static void PlayerQuitGame(player_t *player)
+     }
+ }
+ 
++// [EiN] Called when a player joins the game while it is played: they
++// are reborn at the start of the tic as a player who came back after
++// dying would be, with nothing of whoever played from their place
++// before, whose body stays where it fell. Their class is the one they
++// joined with.
++
++static void PlayerJoinGame(int player_num, int class)
++{
++    static char joinmsg[80];
++    player_t *player = &players[player_num];
++
++    M_StringCopy(joinmsg, "PLAYER 1 JOINED THE GAME", sizeof(joinmsg));
++    joinmsg[7] += player_num;
++
++    if (player->mo != NULL)
++    {
++        player->mo->player = NULL;
++    }
++
++    memset(player, 0, sizeof(*player));
++    playeringame[player_num] = true;
++    player->playerstate = PST_REBORN;
++    PlayerClass[player_num] = class;
++
++    if (player_num == consoleplayer)
++    {
++        displayplayer = consoleplayer;
++    }
++    else
++    {
++        P_SetMessage(&players[consoleplayer], joinmsg, true);
++    }
++}
++
+ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+ {
+     unsigned int i;
+ 
+     // Check for player quits.
++    // [EiN] and joins
+ 
+     for (i = 0; i < maxplayers; ++i)
+     {
+@@ -73,6 +111,12 @@ static void RunTic(ticcmd_t *cmds, boolean *ingame)
+         {
+             PlayerQuitGame(&players[i]);
+         }
++        else if (!demoplayback && !playeringame[i] && ingame[i])
++        {
++            PlayerJoinGame(i, i == consoleplayer ? EIN_PlayerClass()
++                                : ein_joined != NULL && ein_joined[i] > 0
++                                ? ein_joined[i] - 1 : PCLASS_FIGHTER);
++        }
+     }
+ 
+     netcmds = cmds;
+@@ -204,6 +248,54 @@ static void InitConnectData(net_connect_data_t *connect_data)
+     connect_data->is_freedoom = 0;
+ }
+ 
++// [EiN] A game EiN hosts (ein_net.c): what this player connects with,
++// what they ask to start it with (the server's own settings take its
++// place), and the game starting as the server sent it, from whatever
++// was on before: the title's demos, or a game alone.
++
++void EIN_ConnectData(net_connect_data_t *connect_data)
++{
++    InitConnectData(connect_data);
++}
++
++void EIN_SaveGameSettings(net_gamesettings_t *settings)
++{
++    SaveGameSettings(settings);
++}
++
++void EIN_StartNetGame(net_gamesettings_t *settings)
++{
++    extern byte consistancy[MAXPLAYERS][BACKUPTICS];
++    int i;
++
++    if (demoplayback)
++    {
++        G_CheckDemoStatus();
++    }
++
++    advancedemo = false;
++    gameaction = ga_nothing;
++    MN_DeactivateMenu();
++    netgame = true;
++    autostart = true;
++    LoadGameSettings(settings);
++
++    // Every game's checks start from nothing, whatever was played here
++    // before.
++    memset(consistancy, 0, sizeof(consistancy));
++
++    // Whoever joins while the game is played watches the first player
++    // in it until their own place is.
++    displayplayer = consoleplayer;
++    for (i = 0; i < MAXPLAYERS && !playeringame[displayplayer]; ++i)
++    {
++        displayplayer = i;
++    }
++
++    G_StartNewInit();
++    G_InitNew(startskill, startepisode, startmap);
++}
++
+ void D_ConnectNetGame(void)
+ {
+     net_connect_data_t connect_data;
+diff --git a/src/hexen/g_game.c b/src/hexen/g_game.c
+index 6ed6c3fb..275f315e 100644
+--- a/src/hexen/g_game.c
++++ b/src/hexen/g_game.c
+@@ -30,6 +30,7 @@
+ #include "m_misc.h"
+ #include "p_local.h"
+ #include "v_video.h"
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ #define AM_STARTKEY	9
+ 
+@@ -1009,6 +1010,8 @@ void G_DoLoadLevel(void)
+ 
+     SN_StopAllSequences();
+     P_SetupLevel(gameepisode, gamemap, 0, gameskill);
++    // [EiN] one who joins the game watches someone in it until they are
++    if (playeringame[consoleplayer])
+     displayplayer = consoleplayer;      // view the guy you are playing   
+     gameaction = ga_nothing;
+     Z_CheckHeap();
+@@ -1520,6 +1523,11 @@ void G_Ticker(void)
+                         break;
+ 
+                     case BTS_SAVEGAME:
++                        // [EiN] not by the tics a joining player plays through
++                        if (ein_replaying)
++                        {
++                            break;
++                        }
+                         if (!savedescription[0])
+                         {
+                             if (netgame)
+@@ -1562,6 +1570,11 @@ void G_Ticker(void)
+     {
+         case GS_LEVEL:
+             P_Ticker();
++            // [EiN] what this player sees waits until they play
++            if (ein_replaying)
++            {
++                break;
++            }
+             SB_Ticker();
+             AM_Ticker();
+             CT_Ticker();
+@@ -1821,6 +1834,8 @@ void G_DoReborn(int playernum)
+     }
+     else
+     {                           // Net-game
++        // [EiN] a player who joined has none
++        if (players[playernum].mo)
+         players[playernum].mo->player = NULL;   // Dissassociate the corpse
+ 
+         if (deathmatch)
+diff --git a/src/hexen/mn_menu.c b/src/hexen/mn_menu.c
+index 333d09bc..9d574eb6 100644
+--- a/src/hexen/mn_menu.c
++++ b/src/hexen/mn_menu.c
+@@ -38,6 +38,7 @@
+ 
+ #include "v_trans.h" // [crispy] dp_translation
+ #include "crispy.h"
++#include "net_io.h" // [EiN]
+ 
+ // MACROS ------------------------------------------------------------------
+ 
+@@ -78,6 +79,7 @@ typedef enum
+     MENU_CRISPNESS1,
+     MENU_CRISPNESS2,
+     MENU_CRISPNESS3,
++    MENU_EIN_JOIN, // [EiN]
+     MENU_NONE
+ } MenuType_t;
+ 
+@@ -121,6 +123,45 @@ extern void AM_initVariables(void); // [crispy]
+ 
+ static void InitFonts(void);
+ static void SetMenu(MenuType_t menu);
++
++// [EiN] Join Game: the games EiN hosts for this game, as its search finds
++// them (ein_net.c), a line each; choosing one joins it, once the player has chosen their class. Until
++// there is one, the only line says the search goes on.
++
++#define EIN_MAX_FOUND 8
++
++boolean EIN_CanJoin(void);
++void EIN_Search(void);
++int EIN_Found(void);
++const char *EIN_FoundLine(int i);
++void EIN_JoinFound(int i);
++void EIN_NetJoinAddress(net_addr_t *addr, int class);
++
++static void SCEinJoinGame(int option);
++static void SCEinJoin(int option);
++static void DrawEinJoinMenu(void);
++static void EIN_ForgetJoin(void);
++
++static char EinJoinLines[EIN_MAX_FOUND][48];
++
++static MenuItem_t EinJoinItems[EIN_MAX_FOUND] = {
++    {ITT_EFUNC, EinJoinLines[0], SCEinJoin, 0, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[1], SCEinJoin, 1, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[2], SCEinJoin, 2, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[3], SCEinJoin, 3, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[4], SCEinJoin, 4, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[5], SCEinJoin, 5, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[6], SCEinJoin, 6, MENU_NONE},
++    {ITT_EFUNC, EinJoinLines[7], SCEinJoin, 7, MENU_NONE},
++};
++
++static Menu_t EinJoinMenu = {
++    38, 40,
++    DrawEinJoinMenu,
++    1, EinJoinItems,
++    0,
++    MENU_MAIN
++};
+ static void SCQuitGame(int option);
+ static void SCClass(int option);
+ static void SCSkill(int option);
+@@ -229,13 +270,14 @@ static MenuItem_t MainItems[] = {
+     {ITT_SETMENU, "OPTIONS", NULL, 0, MENU_OPTIONS},
+     {ITT_SETMENU, "GAME FILES", NULL, 0, MENU_FILES},
+     {ITT_EFUNC, "INFO", SCInfo, 0, MENU_NONE},
++    {ITT_EFUNC, "JOIN GAME", SCEinJoinGame, 0, MENU_NONE}, // [EiN]
+     {ITT_EFUNC, "QUIT GAME", SCQuitGame, 0, MENU_NONE}
+ };
+ 
+ static Menu_t MainMenu = {
+     110, 56,
+     DrawMainMenu,
+-    5, MainItems,
++    6, MainItems,
+     0,
+     MENU_NONE
+ };
+@@ -584,6 +626,7 @@ static Menu_t *Menus[] = {
+     &Crispness1Menu,
+     &Crispness2Menu,
+     &Crispness3Menu,
++    &EinJoinMenu, // [EiN]
+ };
+ 
+ // [crispy] intermediate gamma levels
+@@ -656,6 +699,14 @@ static int G_GotoNextLevel(void)
+ void MN_Init(void)
+ {
+     InitFonts();
++
++    // [EiN] Join Game only where the page gives the game a network
++    if (!EIN_CanJoin())
++    {
++        MainItems[4] = MainItems[5];
++        MainMenu.itemCount = 5;
++    }
++
+     MenuActive = false;
+ //      messageson = true;              // Set by defaults in .CFG
+     MauloBaseLump = W_GetNumForName("FBULA0");  // ("M_SKL00");
+@@ -1365,6 +1416,8 @@ static boolean SCNetCheck(int option)
+ 
+ static void SCNetCheck2(int option)
+ {
++    // [EiN] the class menu is a new game's again
++    EIN_ForgetJoin();
+     SCNetCheck(option);
+     // [crispy] go to episode selection if Deathkings is sideloaded
+     if (crispy->havedeathkings)
+@@ -1524,8 +1577,46 @@ static void SCSaveGame(int option)
+ //
+ //==========================================================================
+ 
++// [EiN] The game to join once the player has chosen their class, while
++// the class menu is up for it.
++
++static net_addr_t *ein_join_addr = NULL;
++
++static void EIN_ForgetJoin(void)
++{
++    if (ein_join_addr != NULL)
++    {
++        NET_ReleaseAddress(ein_join_addr);
++        ein_join_addr = NULL;
++    }
++}
++
++void EIN_JoinWith(net_addr_t *addr)
++{
++    EIN_ForgetJoin();
++    NET_ReferenceAddress(addr);
++    ein_join_addr = addr;
++
++    if (!MenuActive)
++    {
++        MN_ActivateMenu();
++    }
++    SetMenu(MENU_CLASS);
++}
++
+ static void SCClass(int option)
+ {
++    if (ein_join_addr != NULL)
++    {
++        net_addr_t *addr = ein_join_addr;
++
++        ein_join_addr = NULL;
++        MN_DeactivateMenu();
++        EIN_NetJoinAddress(addr, option);
++        NET_ReleaseAddress(addr);
++        return;
++    }
++
+     if (netgame)
+     {
+         P_SetMessage(&players[consoleplayer],
+@@ -2966,6 +3057,101 @@ void MN_ActivateMenu(void)
+ //
+ //---------------------------------------------------------------------------
+ 
++// [EiN] What joining a game EiN hosts is at (ein_net.c), a line at a
++// time, on a black screen in place of the game's frame.
++
++void EIN_DrawStatus(const char *text)
++{
++    char line[160];
++    const char *at = text;
++    int lines = 1;
++    int y;
++
++    for (; *at != '\0'; ++at)
++    {
++        lines += *at == '\n';
++    }
++
++    V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, 0);
++    y = (ORIGHEIGHT - lines * 10) / 2;
++
++    for (at = text; ; y += 10)
++    {
++        const char *end = strchr(at, '\n');
++        size_t length = end != NULL ? (size_t) (end - at) : strlen(at);
++
++        if (length >= sizeof(line))
++        {
++            length = sizeof(line) - 1;
++        }
++        memcpy(line, at, length);
++        line[length] = '\0';
++        MN_DrTextA(line, (ORIGWIDTH - MN_TextAWidth(line)) / 2, y);
++
++        if (end == NULL)
++        {
++            break;
++        }
++        at = end + 1;
++    }
++}
++
++static void SCEinJoinGame(int option)
++{
++    if (netgame)
++    {
++        P_SetMessage(&players[consoleplayer],
++                     "YOU ARE PLAYING A GAME WITH OTHERS ALREADY", true);
++        return;
++    }
++
++    SetMenu(MENU_EIN_JOIN);
++    return;
++}
++
++static void SCEinJoin(int option)
++{
++    if (option < EIN_Found())
++    {
++        
++        EIN_JoinFound(option);
++    }
++    return;
++}
++
++static void DrawEinJoinMenu(void)
++{
++    int found;
++    int i;
++
++    EIN_Search();
++    found = EIN_Found();
++
++    for (i = 0; i < found; ++i)
++    {
++        char *c;
++
++        M_StringCopy(EinJoinLines[i], EIN_FoundLine(i), sizeof(EinJoinLines[i]));
++        for (c = EinJoinLines[i]; *c != '\0'; ++c)
++        {
++            *c = toupper(*c);
++        }
++    }
++
++    if (found == 0)
++    {
++        M_StringCopy(EinJoinLines[0], "LOOKING FOR GAMES...", sizeof(EinJoinLines[0]));
++    }
++
++    EinJoinMenu.itemCount = found > 0 ? found : 1;
++    if (CurrentItPos >= EinJoinMenu.itemCount)
++    {
++        CurrentItPos = EinJoinMenu.itemCount - 1;
++    }
++
++    MN_DrTextB("JOIN GAME", 160 - MN_TextBWidth("JOIN GAME") / 2, 10);
++}
++
+ void MN_DeactivateMenu(void)
+ {
+     if (CurrentMenu != NULL)
+diff --git a/src/hexen/s_sound.c b/src/hexen/s_sound.c
+index 1cd109f2..2c57f08f 100644
+--- a/src/hexen/s_sound.c
++++ b/src/hexen/s_sound.c
+@@ -26,6 +26,7 @@
+ #include "p_local.h"            // for P_AproxDistance
+ #include "sounds.h"
+ #include "s_sound.h"
++#include "d_loop.h" // [EiN] ein_replaying
+ 
+ #define PRIORITY_MAX_ADJUST 10
+ #define DIST_ADJUST (MAX_SND_DIST/PRIORITY_MAX_ADJUST)
+@@ -370,6 +371,12 @@ void S_StartSoundAtVolume(mobj_t * origin, int sound_id, int volume)
+     int i;
+     int priority;
+     int sep;
++
++    // [EiN] the tics a joining player plays through are silent
++    if (ein_replaying)
++    {
++        return;
++    }
+     int angle;
+     int absx;
+     int absy;
+diff --git a/src/net_client.c b/src/net_client.c
+index 19b720fa..c406bd2d 100644
+--- a/src/net_client.c
++++ b/src/net_client.c
+@@ -171,11 +171,47 @@ unsigned int net_local_is_freedoom;
+ 
+ #define NET_CL_ExpandTicNum(b) NET_ExpandTicNum(recvwindow_start, (b))
+ 
++// [EiN] Whether each player was in the tic expanded last: one who comes
++// into a tic after one they were not in has joined, and their ticcmds
++// start again from nothing, as the joining player's own do.
++
++static boolean recvwindow_ingame[NET_MAXPLAYERS];
++
++// [EiN] Joining a game while it is played (NET_PACKET_TYPE_EIN_JOIN):
++// the tic this player plays from, and the tics before it, which the
++// server keeps and sends when asked, NET_WriteFullTiccmd's bytes, kept
++// here as they come and expanded one at a time as the game plays them
++// through (NET_CL_EIN_HistoryTic). The tics from the join tic on wait in
++// the receive window until every tic before it has been played.
++
++#define EIN_HISTORY_RETRY_MS 300
++#define EIN_HISTORY_REPLIES 4
++
++boolean net_client_late = false;
++unsigned int net_client_join_tic = 0;
++static byte *history = NULL;
++static size_t history_len = 0;
++static size_t history_room = 0;
++static size_t history_pos = 0;
++static unsigned int history_tics = 0;
++static unsigned int history_played = 0;
++static unsigned int history_asked_at = 0;
++static int history_replies = 0;
++static ticcmd_t history_base[NET_MAXPLAYERS];
++static boolean history_ingame[NET_MAXPLAYERS];
++
++// [EiN] Connecting without waiting for it (NET_CL_EIN_StartConnect):
++// the connect data, and when it started and last sent a SYN.
++
++static net_connect_data_t connect_data;
++static int connect_start_time;
++static int connect_last_send_time;
++
+ // Called when we become disconnected from the server
+ 
+ static void NET_CL_Disconnected(void)
+ {
+-    D_ReceiveTic(NULL, NULL);
++    D_ReceiveTic(NULL, NULL, NULL);
+ }
+ 
+ // Called when a packet is received from the server containing game
+@@ -242,6 +278,14 @@ static void NET_CL_ExpandFullTiccmd(net_full_ticcmd_t *cmd, unsigned int seq,
+             continue;
+         }
+         
++        // [EiN] a player who joined starts from nothing
++        if (cmd->playeringame[i] && !recvwindow_ingame[i])
++        {
++            memset(&recvwindow_cmd_base[i], 0, sizeof(ticcmd_t));
++        }
++
++        recvwindow_ingame[i] = cmd->playeringame[i];
++
+         if (cmd->playeringame[i])
+         {
+             net_ticdiff_t *diff;
+@@ -272,7 +316,8 @@ static void NET_CL_AdvanceWindow(void)
+ 
+         NET_CL_ExpandFullTiccmd(&recvwindow[0].cmd, recvwindow_start,
+                                 ticcmds);
+-        D_ReceiveTic(ticcmds, recvwindow[0].cmd.playeringame);
++        D_ReceiveTic(ticcmds, recvwindow[0].cmd.playeringame,
++                     recvwindow[0].cmd.joined);
+ 
+         // Advance the window
+ 
+@@ -602,12 +647,203 @@ static void NET_CL_ParseGameStart(net_packet_t *packet)
+     memset(recvwindow, 0, sizeof(recvwindow));
+     recvwindow_start = 0;
+     memset(&recvwindow_cmd_base, 0, sizeof(recvwindow_cmd_base));
++    memset(recvwindow_ingame, 0, sizeof(recvwindow_ingame));
++    net_client_late = false;
++    net_client_join_tic = 0;
++    D_EIN_BeginTics(0);
+ 
+     // Clear the send queue
+ 
+     memset(&send_queue, 0x00, sizeof(send_queue));
+ }
+ 
++// [EiN] The server seats this player in the game being played: the game
++// as it started, at this player's place, and the tic they play from.
++// The tics before it are asked for (NET_CL_Run).
++
++static void NET_CL_EIN_ParseJoin(net_packet_t *packet)
++{
++    unsigned int join_tic;
++
++    if (!NET_ReadSettings(packet, &settings) || !NET_ReadInt32(packet, &join_tic))
++    {
++        NET_Log("client: error: failed to read join");
++        return;
++    }
++
++    if (client_state != CLIENT_STATE_WAITING_START
++     || settings.consoleplayer < 0
++     || settings.consoleplayer >= NET_MAXPLAYERS)
++    {
++        NET_Log("client: error: join in state %d at place %d",
++                client_state, settings.consoleplayer);
++        return;
++    }
++
++    NET_Log("client: joining as player %d at tic %d",
++            settings.consoleplayer, join_tic);
++    client_state = CLIENT_STATE_IN_GAME;
++
++    memset(recvwindow, 0, sizeof(recvwindow));
++    recvwindow_start = join_tic;
++    memset(&recvwindow_cmd_base, 0, sizeof(recvwindow_cmd_base));
++    memset(recvwindow_ingame, 0, sizeof(recvwindow_ingame));
++    memset(&send_queue, 0x00, sizeof(send_queue));
++
++    net_client_late = true;
++    net_client_join_tic = join_tic;
++    D_EIN_BeginTics(join_tic);
++    history_len = 0;
++    history_pos = 0;
++    history_tics = 0;
++    history_played = 0;
++    history_asked_at = 0;
++    history_replies = 0;
++    memset(history_base, 0, sizeof(history_base));
++    memset(history_ingame, 0, sizeof(history_ingame));
++}
++
++// [EiN] Tics played before this player's join tic, from the one after
++// those already here: kept, when they are the next.
++
++static void NET_CL_EIN_ParseHistory(net_packet_t *packet)
++{
++    unsigned int start, count, length;
++
++    if (!NET_ReadInt32(packet, &start)
++     || !NET_ReadInt32(packet, &count)
++     || !NET_ReadInt32(packet, &length)
++     || packet->pos + length > packet->len)
++    {
++        return;
++    }
++
++    if (!net_client_late || start != history_tics)
++    {
++        return;
++    }
++
++    if (history_len + length > history_room)
++    {
++        history_room = (history_len + length) * 2;
++        history = I_Realloc(history, history_room);
++    }
++
++    memcpy(history + history_len, packet->data + packet->pos, length);
++    history_len += length;
++    history_tics += count;
++    ++history_replies;
++}
++
++// [EiN] Ask for the tics before the join tic from the first not here:
++// again once a request's replies have all come, or after a while.
++
++static void NET_CL_EIN_AskHistory(void)
++{
++    net_packet_t *packet;
++    unsigned int nowtime = I_GetTimeMS();
++
++    if (!net_client_late || history_tics >= net_client_join_tic)
++    {
++        return;
++    }
++
++    if (history_asked_at != 0 && history_replies < EIN_HISTORY_REPLIES
++     && nowtime - history_asked_at < EIN_HISTORY_RETRY_MS)
++    {
++        return;
++    }
++
++    packet = NET_NewPacket(16);
++    NET_WriteInt16(packet, NET_PACKET_TYPE_EIN_HISTORY_REQUEST);
++    NET_WriteInt32(packet, history_tics);
++    NET_Conn_SendPacket(&client_connection, packet);
++    NET_FreePacket(packet);
++
++    history_asked_at = nowtime;
++    history_replies = 0;
++}
++
++// [EiN] The next tic before the join tic, to play it: every player's
++// ticcmd, whether they are in it and whether they join at it. False
++// when it is not here yet.
++
++boolean NET_CL_EIN_HistoryTic(ticcmd_t *cmds, boolean *ingame, int *joined)
++{
++    net_packet_t view;
++    net_full_ticcmd_t cmd;
++    int i;
++
++    if (history_played >= history_tics)
++    {
++        return false;
++    }
++
++    view.data = history;
++    view.len = history_len;
++    view.alloced = history_room;
++    view.pos = history_pos;
++
++    if (!NET_ReadFullTiccmd(&view, &cmd, settings.lowres_turn))
++    {
++        I_Error("The game's tics before joining it came damaged");
++    }
++
++    history_pos = view.pos;
++    ++history_played;
++
++    for (i = 0; i < NET_MAXPLAYERS; ++i)
++    {
++        if (cmd.playeringame[i] && !history_ingame[i])
++        {
++            memset(&history_base[i], 0, sizeof(ticcmd_t));
++        }
++
++        history_ingame[i] = cmd.playeringame[i];
++        ingame[i] = cmd.playeringame[i];
++        joined[i] = cmd.joined[i];
++
++        if (cmd.playeringame[i])
++        {
++            NET_TiccmdPatch(&history_base[i], &cmd.cmds[i], &cmds[i]);
++            history_base[i] = cmds[i];
++        }
++        else
++        {
++            memset(&cmds[i], 0, sizeof(ticcmd_t));
++        }
++    }
++
++    return true;
++}
++
++// [EiN] How many of the tics before the join tic have been played, and
++// how many are here.
++
++unsigned int NET_CL_EIN_HistoryPlayed(void)
++{
++    return history_played;
++}
++
++unsigned int NET_CL_EIN_HistoryHere(void)
++{
++    return history_tics;
++}
++
++// [EiN] Every tic before the join tic has been played: the tics from it
++// on are expanded from where the last of them left each player.
++
++void NET_CL_EIN_Joined(void)
++{
++    memcpy(recvwindow_cmd_base, history_base, sizeof(recvwindow_cmd_base));
++    memcpy(recvwindow_ingame, history_ingame, sizeof(recvwindow_ingame));
++    net_client_late = false;
++    free(history);
++    history = NULL;
++    history_room = 0;
++    history_len = 0;
++}
++
+ static void NET_CL_SendResendRequest(int start, int end)
+ {
+     net_packet_t *packet;
+@@ -981,6 +1217,14 @@ static void NET_CL_ParsePacket(net_packet_t *packet)
+                 NET_CL_ParseConsoleMessage(packet);
+                 break;
+ 
++            case NET_PACKET_TYPE_EIN_JOIN:
++                NET_CL_EIN_ParseJoin(packet);
++                break;
++
++            case NET_PACKET_TYPE_EIN_HISTORY:
++                NET_CL_EIN_ParseHistory(packet);
++                break;
++
+             default:
+                 break;
+         }
+@@ -1032,8 +1276,16 @@ void NET_CL_Run(void)
+     if (client_state == CLIENT_STATE_IN_GAME)
+     {
+         // Possibly advance the receive window
++        // [EiN] not before every tic before the join tic is played
+ 
+-        NET_CL_AdvanceWindow();
++        if (net_client_late)
++        {
++            NET_CL_EIN_AskHistory();
++        }
++        else
++        {
++            NET_CL_AdvanceWindow();
++        }
+ 
+         // Check if our resend requests have timed out
+ 
+@@ -1150,6 +1402,96 @@ boolean NET_CL_Connect(net_addr_t *addr, net_connect_data_t *data)
+     }
+ }
+ 
++// [EiN] Connect to the server at `addr` without waiting for it: the
++// SYN is sent, again every second, by NET_CL_EIN_Connecting, which the
++// game calls each frame until it answers. Whatever the server sends
++// after its answer (a hosted game launches at once) is taken from then
++// on.
++
++boolean NET_CL_EIN_StartConnect(net_addr_t *addr, net_connect_data_t *data)
++{
++    server_addr = addr;
++    NET_ReferenceAddress(addr);
++    connect_data = *data;
++
++    memcpy(net_local_wad_sha1sum, data->wad_sha1sum, sizeof(sha1_digest_t));
++    memcpy(net_local_deh_sha1sum, data->deh_sha1sum, sizeof(sha1_digest_t));
++    net_local_is_freedoom = data->is_freedoom;
++
++    client_context = NET_NewContext();
++
++    if (!addr->module->InitClient())
++    {
++        SetRejectReason("Failed to initialize client module");
++        NET_ReleaseAddress(server_addr);
++        return false;
++    }
++
++    NET_AddModule(client_context, addr->module);
++
++    net_client_connected = true;
++    net_client_received_wait_data = false;
++    drone = data->drone;
++    client_state = CLIENT_STATE_WAITING_LAUNCH;
++
++    NET_Conn_InitClient(&client_connection, addr, NET_PROTOCOL_UNKNOWN);
++
++    connect_start_time = I_GetTimeMS();
++    connect_last_send_time = -1;
++    SetRejectReason("Unknown reason");
++
++    return true;
++}
++
++// [EiN] 1 once connected, 0 while connecting, -1 when the server refused
++// or did not answer within 5 seconds (net_client_reject_reason says).
++
++int NET_CL_EIN_Connecting(void)
++{
++    int nowtime = I_GetTimeMS();
++
++    if (client_connection.state == NET_CONN_STATE_CONNECTING)
++    {
++        if (nowtime - connect_last_send_time > 1000 || connect_last_send_time < 0)
++        {
++            NET_CL_SendSYN(&connect_data);
++            connect_last_send_time = nowtime;
++        }
++
++        NET_CL_Run();
++
++        if (client_connection.state == NET_CONN_STATE_CONNECTING
++         && nowtime - connect_start_time > 5000)
++        {
++            SetRejectReason("No response from server");
++            client_connection.state = NET_CONN_STATE_DISCONNECTED;
++        }
++    }
++
++    if (client_connection.state == NET_CONN_STATE_CONNECTED)
++    {
++        SetRejectReason(NULL);
++        return 1;
++    }
++
++    if (client_connection.state == NET_CONN_STATE_CONNECTING)
++    {
++        return 0;
++    }
++
++    NET_CL_Shutdown();
++    return -1;
++}
++
++// [EiN] Whether the server has launched the game for this player, who
++// then says what they start it with (NET_CL_StartGame), and whether it
++// has sent the game's start (NET_CL_GetSettings).
++
++boolean NET_CL_EIN_Launched(void)
++{
++    return client_state != CLIENT_STATE_WAITING_LAUNCH;
++}
++
+ // read game settings received from server
+ 
+ boolean NET_CL_GetSettings(net_gamesettings_t *_settings)
+diff --git a/src/net_client.h b/src/net_client.h
+index 37ba0198..1aec5070 100644
+--- a/src/net_client.h
++++ b/src/net_client.h
+@@ -50,4 +50,17 @@ extern unsigned int net_local_is_freedoom;
+ 
+ extern boolean drone;
+ 
++// [EiN] connecting without waiting, and joining a game being played
++
++boolean NET_CL_EIN_StartConnect(net_addr_t *addr, net_connect_data_t *data);
++int NET_CL_EIN_Connecting(void);
++boolean NET_CL_EIN_Launched(void);
++boolean NET_CL_EIN_HistoryTic(ticcmd_t *cmds, boolean *ingame, int *joined);
++unsigned int NET_CL_EIN_HistoryPlayed(void);
++unsigned int NET_CL_EIN_HistoryHere(void);
++void NET_CL_EIN_Joined(void);
++
++extern boolean net_client_late;
++extern unsigned int net_client_join_tic;
++
+ #endif /* #ifndef NET_CLIENT_H */
+diff --git a/src/net_defs.h b/src/net_defs.h
+index ab852c08..f08de7fa 100644
+--- a/src/net_defs.h
++++ b/src/net_defs.h
+@@ -151,6 +151,12 @@ typedef enum
+     NET_PACKET_TYPE_QUERY_RESPONSE,
+     NET_PACKET_TYPE_LAUNCH,
+     NET_PACKET_TYPE_NAT_HOLE_PUNCH,
++    // [EiN] a player who comes while the game is played: the server's
++    // start of the game for them, at the tic they join it from, and the
++    // tics before it, which they ask for and the server answers with
++    NET_PACKET_TYPE_EIN_JOIN,
++    NET_PACKET_TYPE_EIN_HISTORY_REQUEST,
++    NET_PACKET_TYPE_EIN_HISTORY,
+ } net_packet_type_t;
+ 
+ typedef enum
+@@ -240,6 +246,9 @@ typedef struct
+     unsigned int seq;
+     boolean playeringame[NET_MAXPLAYERS];
+     net_ticdiff_t cmds[NET_MAXPLAYERS];
++    // [EiN] the players who join the game at this tic, each by their
++    // class plus one (Hexen's; 1 in the other games); 0 for the rest
++    int joined[NET_MAXPLAYERS];
+ } net_full_ticcmd_t;
+ 
+ // Data sent in response to server queries
+diff --git a/src/net_server.c b/src/net_server.c
+index 9374b64e..1fadea81 100644
+--- a/src/net_server.c
++++ b/src/net_server.c
+@@ -120,6 +120,11 @@ typedef struct
+ 
+     int player_class;
+ 
++    // [EiN] connected while the game is played, and not yet given a
++    // player's place in it (NET_SV_EIN_Seat)
++
++    boolean late;
++
+ } net_client_t;
+ 
+ // structure used for the recv window
+@@ -165,6 +170,46 @@ static net_client_recv_t recvwindow[BACKUPTICS][NET_MAXPLAYERS];
+ 
+ #define NET_SV_ExpandTicNum(b) NET_ExpandTicNum(recvwindow_start, (b))
+ 
++// [EiN] A game EiN hosts (ein_server.c): the server starts it itself,
++// with its own settings, as soon as someone connects, and seats whoever
++// connects while it is played. Each player's place has the tic they
++// joined at: the game is played as Chocolate Doom plays it but that a
++// player joins at a tic, which every player's game is told of in that
++// tic's ticcmds (net_full_ticcmd_t's joined). Every tic played is kept
++// (sv_history), so whoever joins plays the game through to their tic
++// before they play, as a demo plays, and is where everyone else is.
++
++boolean ein_hosted = false;
++int ein_hosted_deathmatch = 0;
++int ein_hosted_episode = 1;
++int ein_hosted_map = 1;
++int ein_hosted_skill = 2;
++int ein_hosted_max_players = NET_MAXPLAYERS;
++
++static unsigned int sv_join_tic[NET_MAXPLAYERS];
++static boolean sv_joined_late[NET_MAXPLAYERS];
++static int sv_join_class[NET_MAXPLAYERS];
++static net_gamesettings_t sv_start_settings;
++
++// The tics played, NET_WriteFullTiccmd's bytes one after another, and
++// where each starts.
++
++static net_packet_t *sv_history = NULL;
++static unsigned int *sv_history_at = NULL;
++static unsigned int sv_history_tics = 0;
++static unsigned int sv_history_room = 0;
++
++// The bytes of history a reply carries at most, and the replies a
++// request is answered with.
++
++#define EIN_HISTORY_CHUNK 16000
++#define EIN_HISTORY_REPLIES 4
++
++// Whether the player at `i` is waited for at tic `tic`: they play from
++// the tic they joined at on.
++
++static boolean EIN_PlayerRequired(int i, unsigned int tic);
++
+ static void NET_SV_DisconnectClient(net_client_t *client)
+ {
+     if (client->active)
+@@ -182,6 +227,45 @@ static boolean ClientConnected(net_client_t *client)
+         && client->connection.state == NET_CONN_STATE_CONNECTED;
+ }
+ 
++static boolean EIN_PlayerRequired(int i, unsigned int tic)
++{
++    return sv_players[i] != NULL && ClientConnected(sv_players[i])
++        && tic >= sv_join_tic[i];
++}
++
++// [EiN] Keep the tic whose ticcmds `cmd` has, after those before it.
++
++static void EIN_RecordTic(net_full_ticcmd_t *cmd)
++{
++    if (sv_history == NULL)
++    {
++        sv_history = NET_NewPacket(65536);
++    }
++
++    if (sv_history_tics >= sv_history_room)
++    {
++        sv_history_room = sv_history_room ? sv_history_room * 2 : 4096;
++        sv_history_at = I_Realloc(sv_history_at,
++                                  sv_history_room * sizeof(unsigned int));
++    }
++
++    sv_history_at[sv_history_tics++] = sv_history->len;
++    NET_WriteFullTiccmd(sv_history, cmd, sv_settings.lowres_turn);
++}
++
++static void EIN_ForgetHistory(void)
++{
++    if (sv_history != NULL)
++    {
++        sv_history->len = 0;
++    }
++
++    sv_history_tics = 0;
++    memset(sv_join_tic, 0, sizeof(sv_join_tic));
++    memset(sv_joined_late, 0, sizeof(sv_joined_late));
++    memset(sv_join_class, 0, sizeof(sv_join_class));
++}
++
+ // Send a message to be displayed on a client's console
+ 
+ static void NET_SV_SendConsoleMessage(net_client_t *client, const char *s, ...) PRINTF_ATTR(2, 3);
+@@ -307,7 +391,9 @@ static int NET_SV_MaxPlayers(void)
+     {
+         if (ClientConnected(&clients[i]))
+         {
+-            return clients[i].max_players;
++            // [EiN] as many as the game was hosted for, at most
++            return ein_hosted && ein_hosted_max_players < clients[i].max_players
++                 ? ein_hosted_max_players : clients[i].max_players;
+         }
+     }
+ 
+@@ -498,7 +584,8 @@ static unsigned int NET_SV_LatestAcknowledged(void)
+ 
+     for (i=0; i<MAXNETNODES; ++i) 
+     {
+-        if (ClientConnected(&clients[i]))
++        // [EiN] a player not yet seated has nothing to acknowledge
++        if (ClientConnected(&clients[i]) && !clients[i].late)
+         {
+             if (clients[i].acknowledged < lowtic)
+             {
+@@ -539,7 +626,8 @@ static void NET_SV_AdvanceWindow(void)
+ 
+         for (i=0; i<NET_MAXPLAYERS; ++i)
+         {
+-            if (sv_players[i] == NULL || !ClientConnected(sv_players[i]))
++            // [EiN] a player is waited for from the tic they joined at
++            if (!EIN_PlayerRequired(i, recvwindow_start))
+             {
+                 continue;
+             }
+@@ -560,6 +648,30 @@ static void NET_SV_AdvanceWindow(void)
+             break;
+         }
+         
++        // [EiN] keep the tic, as every player was sent it: a player is
++        // in it when their ticcmd is
++
++        if (ein_hosted)
++        {
++            net_full_ticcmd_t cmd;
++
++            memset(&cmd, 0, sizeof(cmd));
++
++            for (i=0; i<NET_MAXPLAYERS; ++i)
++            {
++                cmd.playeringame[i] = recvwindow[0][i].active;
++                cmd.cmds[i] = recvwindow[0][i].diff;
++
++                if (cmd.playeringame[i] && sv_joined_late[i]
++                 && recvwindow_start == sv_join_tic[i])
++                {
++                    cmd.joined[i] = sv_join_class[i];
++                }
++            }
++
++            EIN_RecordTic(&cmd);
++        }
++
+         // Advance the window
+ 
+         memmove(recvwindow, recvwindow + 1,
+@@ -620,6 +732,7 @@ static void NET_SV_InitNewClient(net_client_t *client, net_addr_t *addr,
+     client->acknowledged = 0;
+     client->drone = false;
+     client->ready = false;
++    client->late = false;
+ 
+     client->last_gamedata_time = 0;
+ 
+@@ -723,7 +836,8 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+     // At this point we have received a valid SYN.
+ 
+     // Not accepting new connections?
+-    if (server_state != SERVER_WAITING_LAUNCH)
++    // [EiN] a hosted game takes players while it starts and is played
++    if (server_state != SERVER_WAITING_LAUNCH && !ein_hosted)
+     {
+         NET_Log("server: error: not in waiting launch state, server_state=%d",
+                 server_state);
+@@ -733,7 +847,11 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+     }
+ 
+     // Before accepting a new client, check that there is a slot free.
+-    NET_SV_AssignPlayers();
++    // [EiN] the players of a game being played keep their numbers
++    if (server_state != SERVER_IN_GAME)
++    {
++        NET_SV_AssignPlayers();
++    }
+     num_players = NET_SV_NumPlayers();
+ 
+     if ((!data.drone && num_players >= NET_SV_MaxPlayers())
+@@ -831,6 +949,32 @@ static void NET_SV_ParseSYN(net_packet_t *packet, net_client_t *client,
+     reply = NET_Conn_NewReliable(&client->connection, NET_PACKET_TYPE_SYN);
+     NET_WriteString(reply, PACKAGE_STRING);
+     NET_WriteProtocol(reply, protocol);
++
++    // [EiN] A hosted game is launched for whoever connects: the first
++    // starts it, those who come before it starts start it with them,
++    // and those who come while it is played are seated once they say
++    // they are ready (NET_SV_ParseGameStart).
++
++    if (ein_hosted)
++    {
++        net_packet_t *launch;
++
++        client->late = server_state == SERVER_IN_GAME;
++
++        if (server_state == SERVER_WAITING_LAUNCH)
++        {
++            server_state = SERVER_WAITING_START;
++        }
++
++        if (!client->late)
++        {
++            NET_SV_AssignPlayers();
++        }
++
++        launch = NET_Conn_NewReliable(&client->connection,
++                                      NET_PACKET_TYPE_LAUNCH);
++        NET_WriteInt8(launch, NET_SV_NumPlayers() + (client->late ? 1 : 0));
++    }
+ }
+ 
+ // Parse a launch packet. This is sent by the key player when the "start"
+@@ -910,6 +1054,9 @@ static void StartGame(void)
+ 
+     sv_settings.num_players = NET_SV_NumPlayers();
+ 
++    // [EiN] a new game: none has joined it, none of it is kept yet
++    EIN_ForgetHistory();
++
+     // Copy player classes:
+ 
+     for (i = 0; i < NET_MAXPLAYERS; ++i)
+@@ -926,6 +1073,9 @@ static void StartGame(void)
+ 
+     nowtime = I_GetTimeMS();
+ 
++    // [EiN] what whoever joins later is sent, at their own place
++    sv_start_settings = sv_settings;
++
+     // Send start packets to each connected node
+ 
+     for (i = 0; i < MAXNETNODES; ++i)
+@@ -1000,12 +1150,150 @@ static void SendAllWaitingData(void)
+ 
+ // Parse a game start packet
+ 
++// [EiN] Seat `client`, who connected while the game is played and is
++// ready: at a player's place nobody plays from, from a tic nobody has
++// been sent yet, after one the place's last player was not in, so every
++// game sees the place's player leave before the new one joins. They are
++// sent the game as it started, at their place and with the tic they
++// join at (NET_PACKET_TYPE_EIN_JOIN), and ask for the tics before it.
++
++static void NET_SV_EIN_Seat(net_client_t *client)
++{
++    net_gamesettings_t settings;
++    net_packet_t *packet;
++    unsigned int join_tic;
++    int place = -1;
++    int i;
++
++    for (i = 0; i < NET_SV_MaxPlayers() && i < NET_MAXPLAYERS; ++i)
++    {
++        if (sv_players[i] == NULL || !ClientConnected(sv_players[i]))
++        {
++            place = i;
++            break;
++        }
++    }
++
++    if (place < 0)
++    {
++        NET_SV_SendReject(client->addr, "Server is full!");
++        NET_SV_DisconnectClient(client);
++        return;
++    }
++
++    join_tic = recvwindow_start;
++
++    for (i = 0; i < MAXNETNODES; ++i)
++    {
++        if (ClientConnected(&clients[i]) && !clients[i].late
++         && clients[i].sendseq > join_tic)
++        {
++            join_tic = clients[i].sendseq;
++        }
++    }
++
++    for (i = BACKUPTICS - 1; i >= 0; --i)
++    {
++        if (recvwindow[i][place].active)
++        {
++            if (recvwindow_start + i + 2 > join_tic)
++            {
++                join_tic = recvwindow_start + i + 2;
++            }
++            break;
++        }
++    }
++
++    for (i = 0; i < BACKUPTICS; ++i)
++    {
++        memset(&recvwindow[i][place], 0, sizeof(recvwindow[i][place]));
++    }
++
++    sv_players[place] = client;
++    client->player_number = place;
++    client->late = false;
++    client->ready = true;
++    client->sendseq = join_tic;
++    client->acknowledged = join_tic;
++    client->last_gamedata_time = I_GetTimeMS();
++    sv_join_tic[place] = join_tic;
++    sv_joined_late[place] = true;
++    sv_join_class[place] = client->player_class + 1;
++
++    settings = sv_start_settings;
++    settings.consoleplayer = place;
++
++    packet = NET_Conn_NewReliable(&client->connection, NET_PACKET_TYPE_EIN_JOIN);
++    NET_WriteSettings(packet, &settings);
++    NET_WriteInt32(packet, join_tic);
++
++    NET_Log("server: %s joins as player %d at tic %d",
++            NET_AddrToString(client->addr), place, join_tic);
++    printf("%s joins as player %d at tic %d\n", client->name, place + 1,
++           join_tic);
++}
++
++// [EiN] Answer a request for the tics played from `start` on, as many
++// as there are, in a few replies; the tics of a reply are whole.
++
++static void NET_SV_EIN_ParseHistoryRequest(net_packet_t *packet,
++                                           net_client_t *client)
++{
++    unsigned int start;
++    int reply;
++
++    if (!NET_ReadInt32(packet, &start))
++    {
++        return;
++    }
++
++    for (reply = 0; reply < EIN_HISTORY_REPLIES && start < sv_history_tics;
++         ++reply)
++    {
++        net_packet_t *out;
++        unsigned int end = start + 1;
++        unsigned int from = sv_history_at[start];
++        unsigned int to;
++
++        // Where the tic `t` starts, or the history ends.
++#define EIN_TIC_AT(t) ((t) < sv_history_tics ? sv_history_at[t] : sv_history->len)
++
++        while (end < sv_history_tics && EIN_TIC_AT(end + 1) - from <= EIN_HISTORY_CHUNK)
++        {
++            ++end;
++        }
++
++        to = EIN_TIC_AT(end);
++#undef EIN_TIC_AT
++
++        out = NET_NewPacket(to - from + 16);
++        NET_WriteInt16(out, NET_PACKET_TYPE_EIN_HISTORY);
++        NET_WriteInt32(out, start);
++        NET_WriteInt32(out, end - start);
++        NET_WriteInt32(out, to - from);
++        memcpy(out->data + out->len, sv_history->data + from, to - from);
++        out->len += to - from;
++        NET_Conn_SendPacket(&client->connection, out);
++        NET_FreePacket(out);
++
++        start = end;
++    }
++}
++
+ static void NET_SV_ParseGameStart(net_packet_t *packet, net_client_t *client)
+ {
+     net_gamesettings_t settings;
+ 
+     NET_Log("server: processing game start packet");
+ 
++    // [EiN] whoever came while the game is played is seated
++
++    if (server_state == SERVER_IN_GAME && client->late)
++    {
++        NET_SV_EIN_Seat(client);
++        return;
++    }
++
+     // Can only start a game if we are in the waiting start state.
+ 
+     if (server_state != SERVER_WAITING_START)
+@@ -1024,6 +1312,22 @@ static void NET_SV_ParseGameStart(net_packet_t *packet, net_client_t *client)
+             return;
+         }
+ 
++        // [EiN] a hosted game is played as it was hosted, whatever the
++        // first player's own command line says
++
++        if (ein_hosted)
++        {
++            settings.deathmatch = ein_hosted_deathmatch;
++            settings.episode = ein_hosted_episode;
++            settings.map = ein_hosted_map;
++            settings.skill = ein_hosted_skill;
++            settings.nomonsters = 0;
++            settings.fast_monsters = 0;
++            settings.respawn_monsters = 0;
++            settings.timelimit = 0;
++            settings.loadgame = -1;
++        }
++
+         // Check the game settings are valid
+ 
+         if (!NET_ValidGameSettings(sv_gamemode, sv_gamemission, &settings))
+@@ -1227,6 +1531,12 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
+             continue;
+         }
+ 
++        // [EiN] the player plays from the tic they joined at
++        if (seq + i < sv_join_tic[player])
++        {
++            continue;
++        }
++
+         recvobj = &recvwindow[index][player];
+         recvobj->active = true;
+         recvobj->diff = diff;
+@@ -1261,7 +1571,8 @@ static void NET_SV_ParseGameData(net_packet_t *packet, net_client_t *client)
+     index = resend_end - 1;
+     resend_start = resend_end;
+     
+-    while (index >= 0)
++    // [EiN] nothing is asked for from before the player joined
++    while (index >= 0 && recvwindow_start + index >= sv_join_tic[player])
+     {
+         recvobj = &recvwindow[index][player];
+ 
+@@ -1594,6 +1905,9 @@ static void NET_SV_Packet(net_packet_t *packet, net_addr_t *addr)
+             case NET_PACKET_TYPE_GAMEDATA_RESEND:
+                 NET_SV_ParseResendRequest(packet, client);
+                 break;
++            case NET_PACKET_TYPE_EIN_HISTORY_REQUEST:
++                NET_SV_EIN_ParseHistoryRequest(packet, client);
++                break;
+             default:
+                 // unknown packet type
+ 
+@@ -1642,7 +1956,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+             continue;
+         }
+ 
+-        if (sv_players[i] == NULL || !ClientConnected(sv_players[i]))
++        // [EiN] a player is waited for from the tic they joined at
++        if (!EIN_PlayerRequired(i, client->sendseq))
+         {
+             continue;
+         }
+@@ -1681,6 +1996,8 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+     {
+         net_client_recv_t *recvobj;
+ 
++        cmd.joined[i] = 0;
++
+         if (sv_players[i] == client)
+         {
+             // Not the player we are sending to
+@@ -1689,7 +2006,9 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+             continue;
+         }
+         
+-        if (sv_players[i] == NULL || !recvwindow[recv_index][i].active)
++        // [EiN] a player is in a tic when their ticcmd is: whoever left
++        // is in those they sent, whoever joined from their tic on
++        if (!recvwindow[recv_index][i].active)
+         {
+             cmd.playeringame[i] = false;
+             continue;
+@@ -1697,6 +2016,11 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+ 
+         cmd.playeringame[i] = true;
+ 
++        if (sv_joined_late[i] && client->sendseq == sv_join_tic[i])
++        {
++            cmd.joined[i] = sv_join_class[i];
++        }
++
+         recvobj = &recvwindow[recv_index][i];
+ 
+         cmd.cmds[i] = recvobj->diff;
+@@ -1719,6 +2043,12 @@ static void NET_SV_PumpSendQueue(net_client_t *client)
+     if (starttic < 0)
+         starttic = 0;
+ 
++    // [EiN] nothing from before the player joined: they play those tics
++    // through from what the server kept
++    if (client->player_number >= 0
++     && starttic < (int) sv_join_tic[client->player_number])
++        starttic = sv_join_tic[client->player_number];
++
+     NET_Log("server: send tics %d-%d to %s", starttic, endtic,
+             NET_AddrToString(client->addr));
+     NET_SV_SendTics(client, starttic, endtic);
+@@ -1760,6 +2090,12 @@ void NET_SV_CheckDeadlock(net_client_t *client)
+ 
+         for (i=0; i<BACKUPTICS; ++i)
+         {
++            // [EiN] nothing is asked for from before the player joined
++            if (recvwindow_start + i < sv_join_tic[client->player_number])
++            {
++                continue;
++            }
++
+             if (!recvwindow[i][client->player_number].active)
+             {
+                 NET_Log("server: deadlock: sending resend request for %d-%d",
+@@ -1799,6 +2135,7 @@ static void NET_SV_GameEnded(void)
+ 
+     server_state = SERVER_WAITING_LAUNCH;
+     sv_gamemode = indetermined;
++    EIN_ForgetHistory();
+ 
+     for (i=0; i<MAXNETNODES; ++i)
+     {
+@@ -1830,8 +2167,20 @@ static void NET_SV_RunClient(net_client_t *client)
+ 
+     if (client->connection.state == NET_CONN_STATE_DISCONNECTED)
+     {
++        int i;
++
+         client->active = false;
+ 
++        // [EiN] the player's place is free: whoever connects next may be
++        // given this client's slot, and is not who played there
++        for (i = 0; i < NET_MAXPLAYERS; ++i)
++        {
++            if (sv_players[i] == client)
++            {
++                sv_players[i] = NULL;
++            }
++        }
++
+         // If we were about to start a game, any player disconnecting
+         // should cause an abort.
+ 
+@@ -1879,7 +2228,8 @@ static void NET_SV_RunClient(net_client_t *client)
+         }
+     }
+ 
+-    if (server_state == SERVER_IN_GAME)
++    // [EiN] one not yet seated has no place to be sent tics for
++    if (server_state == SERVER_IN_GAME && !client->late)
+     {
+         NET_SV_PumpSendQueue(client);
+         NET_SV_CheckDeadlock(client);
+@@ -2095,3 +2445,76 @@ void NET_SV_Shutdown(void)
+         I_Sleep(1);
+     }
+ }
++
++// [EiN] The address a player is at, a.b.c.d as one number (net_ein.c).
++
++unsigned int NET_EIN_AddrIp(net_addr_t *addr);
++
++// [EiN] Who plays, for EiN's list of the games hosted: each player's
++// name and address (a.b.c.d), as JSON, into `buffer`.
++
++void NET_SV_EIN_Status(char *buffer, size_t size)
++{
++    size_t used;
++    int i;
++    boolean first = true;
++
++    used = M_snprintf(buffer, size, "{\"map\":\"\",\"players\":[");
++
++    for (i = 0; i < MAXNETNODES && used < size; ++i)
++    {
++        net_client_t *client = &clients[i];
++        char name[2 * MAXPLAYERNAME];
++        unsigned int ip;
++        size_t n = 0;
++        const char *c;
++
++        if (!ClientConnected(client) || client->drone || client->name == NULL)
++        {
++            continue;
++        }
++
++        for (c = client->name; *c != '\0' && n < sizeof(name) - 2; ++c)
++        {
++            if (*c == '"' || *c == '\\')
++            {
++                name[n++] = '\\';
++            }
++            if ((unsigned char) *c >= ' ')
++            {
++                name[n++] = *c;
++            }
++        }
++        name[n] = '\0';
++
++        ip = NET_EIN_AddrIp(client->addr);
++        used += M_snprintf(buffer + used, size - used,
++                           "%s{\"name\":\"%s\",\"address\":\"%u.%u.%u.%u\"}",
++                           first ? "" : ",", name, (ip >> 24) & 0xff,
++                           (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
++        first = false;
++    }
++
++    if (used < size)
++    {
++        M_snprintf(buffer + used, size - used, "]}");
++    }
++}
++
++// [EiN] The player at the address `ip` has left: their link to the
++// game closed. They are dropped at once, rather than once they have
++// been silent long enough, so nobody waits for them.
++
++void NET_SV_EIN_Drop(unsigned int ip)
++{
++    int i;
++
++    for (i = 0; i < MAXNETNODES; ++i)
++    {
++        if (clients[i].active && NET_EIN_AddrIp(clients[i].addr) == ip)
++        {
++            clients[i].connection.state = NET_CONN_STATE_DISCONNECTED;
++            clients[i].connection.disconnect_reason = NET_DISCONNECT_REMOTE;
++        }
++    }
++}
+diff --git a/src/net_server.h b/src/net_server.h
+index b9de7456..8187481f 100644
+--- a/src/net_server.h
++++ b/src/net_server.h
+@@ -38,5 +38,21 @@ void NET_SV_AddModule(net_module_t *module);
+ 
+ void NET_SV_RegisterWithMaster(void);
+ 
++// [EiN] a game EiN hosts (ein_server.c)
++
++#include <stddef.h>
++
++#include "doomtype.h"
++
++extern boolean ein_hosted;
++extern int ein_hosted_deathmatch;
++extern int ein_hosted_episode;
++extern int ein_hosted_map;
++extern int ein_hosted_skill;
++extern int ein_hosted_max_players;
++
++void NET_SV_EIN_Status(char *buffer, size_t size);
++void NET_SV_EIN_Drop(unsigned int ip);
++
+ #endif /* #ifndef NET_SERVER_H */
+ 
+diff --git a/src/net_structrw.c b/src/net_structrw.c
+index 2dbd2740..a37bb57f 100644
+--- a/src/net_structrw.c
++++ b/src/net_structrw.c
+@@ -419,6 +419,25 @@ boolean NET_ReadFullTiccmd(net_packet_t *packet, net_full_ticcmd_t *cmd, boolean
+         }
+     }
+ 
++    // [EiN] who joins at this tic, and their classes
++
++    if (!NET_ReadInt8(packet, &bitfield))
++    {
++        return false;
++    }
++
++    for (i=0; i<NET_MAXPLAYERS; ++i)
++    {
++        unsigned int joined = 0;
++
++        if ((bitfield & (1 << i)) != 0 && !NET_ReadInt8(packet, &joined))
++        {
++            return false;
++        }
++
++        cmd->joined[i] = joined;
++    }
++
+     return true;
+ }
+ 
+@@ -455,6 +474,28 @@ void NET_WriteFullTiccmd(net_packet_t *packet, net_full_ticcmd_t *cmd, boolean l
+             NET_WriteTiccmdDiff(packet, &cmd->cmds[i], lowres_turn);
+         }
+     }
++
++    // [EiN] who joins at this tic, and their classes
++
++    bitfield = 0;
++
++    for (i=0; i<NET_MAXPLAYERS; ++i)
++    {
++        if (cmd->joined[i])
++        {
++            bitfield |= 1 << i;
++        }
++    }
++
++    NET_WriteInt8(packet, bitfield);
++
++    for (i=0; i<NET_MAXPLAYERS; ++i)
++    {
++        if (cmd->joined[i])
++        {
++            NET_WriteInt8(packet, cmd->joined[i]);
++        }
++    }
+ }
+ 
+ void NET_WriteWaitData(net_packet_t *packet, net_waitdata_t *data)

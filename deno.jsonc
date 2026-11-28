@@ -6,6 +6,7 @@
 {
   "imports": {
     "@doom/api": "./lib/api.ts",
+    "@doom/server": "./lib/server.ts",
     "@doom/wads": "./lib/wads.ts",
     "@ein/ui/components": "../../src/builtin/ui/src/client/components/mod.ts",
     "@ein/ui/hooks": "../../src/builtin/ui/src/client/hooks/mod.ts",

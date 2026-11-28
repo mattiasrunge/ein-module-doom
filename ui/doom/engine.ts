@@ -34,11 +34,16 @@ function startingSettings(data: Uint8Array | undefined, defaults: [string, numbe
  * `sound` plays what the engine mixes; without it the game is silent. `onKeep` hears each game
  * saved, and the settings as the game writes them, on Quit and as its menu closes.
  *
+ * With `servers`, the network every server of the game is on, the game's menu has Join Game, which
+ * finds them; with `online` the game joins that one as it starts, playing a game already under way
+ * through to where the others are first (`engine/ein_net.c`). With others the player plays under
+ * `name`, their account's.
+ *
  * The keys go to the engine as SDL scancodes (`keys.ts`); the mouse, once the page has handed it
  * over, as its movement, its buttons in SDL's numbering (the browser's plus one) and its wheel.
  */
 export async function startDoom(
-  { game, sound, log, kept, onKeep }: StartOptions<Wad>,
+  { game, sound, log, kept, onKeep, name, online, servers }: StartOptions<Wad>,
 ): Promise<RunningGame> {
   if (game.kind === 'PWAD' && !game.iwad) {
     throw new Error(
@@ -67,6 +72,8 @@ export async function startDoom(
       glue: fileUrl(`${ASSETS}/${engine}.js`),
       wasm: fileUrl(`${ASSETS}/${engine}.wasm`),
       args: [engine, ...wads, '-savedir', SAVES],
+      ...(name ? { name } : {}),
+      ...(online ? { join: online.address } : {}),
     },
     lazy: [
       { path: `/${game.id}`, url: fileUrl(game.path), size: game.size },
@@ -99,6 +106,8 @@ export async function startDoom(
       heardWritten(engine, written);
       onKeep?.(written);
     },
+    online,
+    servers,
   });
   heardRunning({ engine, post: (input) => post?.(input) });
   return {

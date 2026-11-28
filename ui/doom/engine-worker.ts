@@ -26,6 +26,7 @@ type CrispyModule = Omit<EmscriptenModule, 'FS'> & {
     width: number,
     height: number,
   ): void;
+  _ein_join(address: number): void;
   _ein_tick(): void;
   _ein_key(pressed: number, scancode: number): void;
   _ein_button(pressed: number, button: number): void;
@@ -135,6 +136,15 @@ function keepWritten(): void {
   }
 }
 
+/** Set the setting `name` to `value`, as the settings file would. */
+function setVariable(name: string, value: string): void {
+  const at = game.stringToNewUTF8(name);
+  const to = game.stringToNewUTF8(value);
+  game._ein_set_variable(at, to);
+  game._free?.(at);
+  game._free?.(to);
+}
+
 const engine: Engine<DoomStart> = {
   async boot(started) {
     boot = started;
@@ -159,6 +169,13 @@ const engine: Engine<DoomStart> = {
       // The game unwinds its start once its loop would begin (`EIN_MainLoop`): it has started.
       if (error !== 'unwind') throw error;
     }
+    // With others the player plays under their account's name; the page's Join joins its server.
+    if (boot.payload.name) setVariable('player_name', boot.payload.name);
+    if (boot.payload.join) {
+      const address = game.stringToNewUTF8(boot.payload.join);
+      game._ein_join(address);
+      game._free?.(address);
+    }
   },
   tick() {
     game._ein_tick();
@@ -180,13 +197,7 @@ const engine: Engine<DoomStart> = {
   input(data) {
     const input = data as DoomInput;
     if (input.wheel) game._ein_wheel(input.wheel);
-    if (input.set) {
-      const name = game.stringToNewUTF8(input.set.name);
-      const value = game.stringToNewUTF8(input.set.value);
-      game._ein_set_variable(name, value);
-      game._free?.(name);
-      game._free?.(value);
-    }
+    if (input.set) setVariable(input.set.name, input.set.value);
   },
   menu: () => game._ein_menu() !== 0,
   keep() {

@@ -27,6 +27,10 @@ export type Wad = {
   engine: Engine;
   /** A PWAD's IWAD, the one in the folder it is played with; none when there is none for it here. */
   iwad?: string;
+  /** Its maps by their lumps' names (`E1M1`, `MAP01`): a PWAD's own, or its IWAD's when it has none. */
+  maps: string[];
+  /** Whether it can be hosted for others to join: it has maps, and a PWAD has its IWAD here. */
+  hostable: boolean;
 };
 
 /** A WAD of the free game data `doom-fetch` fetches, while it is not in the folder. */

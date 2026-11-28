@@ -59,6 +59,10 @@ extern boolean MenuActive;
 // The game's frame, which its loop would have run forever.
 static void (*frame)(void) = NULL;
 
+// Joining a game EiN hosts (ein_net.c).
+boolean EIN_NetFrame(void);
+void EIN_NetJoin(const char *address);
+
 // The game's loop starts: its frame is kept for ein_tick, and the
 // game's start is left as Emscripten leaves a main loop, by unwinding
 // the stack with the runtime kept, so that, as the loop never returned,
@@ -104,15 +108,16 @@ void ein_start(int argc, char **argv, int samplerate, int width, int height)
 }
 
 // Run whatever tics are due and draw a frame. With the frame rate
-// capped at the game's 35 tics a second, a frame waits for the next
-// tic (TryRunTics spins until it is due), and the page asks more often
-// than that: a frame is run only once a tic has come since the last.
+// capped at the game's 35 tics a second, a frame shows the next tic,
+// and the page asks more often than that: a frame is run only once a
+// tic has come since the last. While the player joins a game EiN hosts
+// (ein_net.c), each frame is a step of joining it.
 EMSCRIPTEN_KEEPALIVE
 void ein_tick(void)
 {
     static int last_tic = -1;
 
-    if (frame == NULL)
+    if (frame == NULL || EIN_NetFrame())
     {
         return;
     }
@@ -149,4 +154,13 @@ EMSCRIPTEN_KEEPALIVE
 int ein_set_variable(const char *name, const char *value)
 {
     return M_SetVariable(name, value) ? 1 : 0;
+}
+
+// Join the game EiN hosts at `address` on the page's network once the
+// game has started: the page's Join. The player plays under the name
+// the setting player_name has.
+EMSCRIPTEN_KEEPALIVE
+void ein_join(const char *address)
+{
+    EIN_NetJoin(address);
 }

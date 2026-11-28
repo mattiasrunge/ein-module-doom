@@ -1,0 +1,27 @@
+#!ts
+/** doom-server — the doom-server service: runs the Doom, Heretic and Hexen games people host until it is stopped. */
+import type { CmdReturn, Command } from '@ein/client';
+import { GameServers } from '@games/host';
+import { serverEngine } from '@doom/server';
+
+const doomServer = async (cmd: Command): CmdReturn => {
+  const stopped = new Promise<void>((resolve) => cmd.onInterrupt(resolve));
+  await cmd.writeLn('doom-server: running the games people host');
+  await new GameServers(cmd, ['doom'], serverEngine(cmd)).run(stopped);
+  return 0;
+};
+
+doomServer.spec = {
+  name: 'doom-server',
+  admin: true,
+  daemon: true,
+  effect: 'write' as const,
+  json: false,
+  description:
+    "Run the Doom, Heretic and Hexen games people host with games-host or on a game's page, each Crispy Doom's server, and carry their players' datagrams (the doom-server service)",
+  args: [],
+  flags: [],
+  examples: ['service restart doom-server'],
+};
+
+export default doomServer;

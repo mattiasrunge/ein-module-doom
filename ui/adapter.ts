@@ -5,7 +5,12 @@ import { startDoom } from './doom/engine.ts';
 import { DoomPad } from './doom/pad.tsx';
 import { KEPT, SHARED } from './doom/start.ts';
 
-/** Doom, Heretic and Hexen on the games module's page for a game and its dashboard card: a game is a WAD. */
+/**
+ * Doom, Heretic and Hexen on the games module's page for a game and its dashboard card: a game is a
+ * WAD. A game is hosted for others to join on its page (Start server), which the doom-server service
+ * runs; Join at the foot of the frame, or Join Game in the game's own menu, enters one, a game under
+ * way too.
+ */
 export const adapter: GameAdapter<Game> = {
   module: 'doom',
   title: 'Doom',
@@ -17,7 +22,7 @@ export const adapter: GameAdapter<Game> = {
     return await startDoom({ game, ...options });
   },
   help:
-    'The mouse looks and fires, its right button runs forward, WASD or the arrows move, E uses, Space jumps (in Heretic it flies up), Shift runs, Escape is the menu, Tab the map.',
+    "The mouse looks and fires, its right button runs forward, WASD or the arrows move, E uses, Space jumps (in Heretic it flies up), Shift runs, Escape is the menu, Tab the map. The menu's Join Game finds the games hosted here.",
   // The player's keys on the keyboard and the mouse, which the games page shows where a keyboard
   // plays, beside the menu's and the map's keys; they change in the Keys dialog.
   keys: {

@@ -8,13 +8,16 @@ import type { Engine } from '../../lib/api.ts';
 /**
  * What the engine's worker is started with: the URLs of the game's build, Crispy Doom's Doom,
  * Heretic or Hexen (`engine`), and its command line, `-iwad` and `-file` naming the WADs in its file
- * system.
+ * system; the name the player plays under with others, and the address of the hosted game it joins
+ * once it has started, when it joins one.
  */
 export type DoomStart = {
   engine: Engine;
   glue: string;
   wasm: string;
   args: string[];
+  name?: string;
+  join?: string;
 };
 
 /**

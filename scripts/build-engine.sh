@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds Doom, Heretic and Hexen to WebAssembly in a container (engine/Containerfile) and writes
-# assets/<game>.js and assets/<game>.wasm for each, and assets/doom-build.txt. Needs only docker
+# assets/<game>.js and assets/<game>.wasm for each, the hosted games' server's
+# assets/doom-server.js and its wasm, and assets/doom-build.txt. Needs only docker
 # with buildx, or podman; run from anywhere.
 set -eu
 

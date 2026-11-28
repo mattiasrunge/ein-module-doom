@@ -1,0 +1,5 @@
+{
+  "description": "Runs the Doom, Heretic and Hexen games people host, and carries their players' datagrams",
+  "restartPolicy": "on-failure",
+  "statusCommand": "games-servers --module doom --count"
+}

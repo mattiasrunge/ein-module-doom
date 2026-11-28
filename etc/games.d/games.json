@@ -8,5 +8,12 @@
   "drops": [
     { "place": "module", "label": "an IWAD, a whole game of Doom, Heretic or Hexen", "name": "\\.wad$", "magic": [{ "at": 0, "text": "IWAD" }] },
     { "place": "module", "label": "a PWAD, levels for one of them", "name": "\\.wad$", "magic": [{ "at": 0, "text": "PWAD" }] }
-  ]
+  ],
+  "multiplayer": {
+    "modes": [{ "value": "deathmatch", "label": "Deathmatch" }, { "value": "coop", "label": "Cooperative" }],
+    "maxPlayers": 4,
+    "defaultPlayers": 4,
+    "defaultMaps": ["MAP01", "E1M1"],
+    "transport": "server"
+  }
 }

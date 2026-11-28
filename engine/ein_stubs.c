@@ -16,8 +16,9 @@
 //	place of the files that need SDL for it: a joystick (the page
 //	hands over keys and the mouse only), the ENDOOM screen shown on
 //	Quit, Heretic's text-mode and Hexen's 640 by 480 startup screens
-//	(both start printing lines, which the page shows) and SDL_net's
-//	network and its text-mode waiting screen (the game plays alone).
+//	(both start printing lines, which the page shows) and the network's
+//	text-mode waiting screen, which a game EiN hosts has no use for
+//	(ein_net.c starts it).
 //
 
 #include <stddef.h>
@@ -28,7 +29,6 @@
 #include "i_videohr.h"
 #include "net_defs.h"
 #include "net_gui.h"
-#include "net_sdl.h"
 #include "txt_io.h"
 #include "txt_main.h"
 
@@ -148,48 +148,6 @@ boolean I_CheckAbortHR(void)
     return false;
 }
 
-static boolean NoNetwork(void)
-{
-    return false;
-}
-
-static void SendNothing(net_addr_t *addr, net_packet_t *packet)
-{
-}
-
-static boolean ReceiveNothing(net_addr_t **addr, net_packet_t **packet)
-{
-    return false;
-}
-
-static void NoAddress(net_addr_t *addr, char *buffer, int buffer_len)
-{
-    if (buffer_len > 0)
-    {
-        buffer[0] = '\0';
-    }
-}
-
-static void FreeNothing(net_addr_t *addr)
-{
-}
-
-static net_addr_t *ResolveNothing(const char *addr)
-{
-    return NULL;
-}
-
 void NET_WaitForLaunch(void)
 {
 }
-
-net_module_t net_sdl_module =
-{
-    NoNetwork,
-    NoNetwork,
-    SendNothing,
-    ReceiveNothing,
-    NoAddress,
-    FreeNothing,
-    ResolveNothing,
-};
