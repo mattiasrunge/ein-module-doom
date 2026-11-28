@@ -38,7 +38,8 @@ export function warpOf(map: string): [number, number] | undefined {
 /**
  * The server's command line for the game `info` asks for (`engine/ein_server.c`): its mode, map,
  * skill and how many may play, and the account that started it, one word, which the games' own
- * search for games lists it as.
+ * search for games lists it as. A deathmatch is played without the map's monsters, as players play
+ * one: they would stand at the players' starts and kill whoever comes in.
  */
 export function serverArgs(info: ServerInfo): string[] {
   const warp = warpOf(info.map);
@@ -46,7 +47,7 @@ export function serverArgs(info: ServerInfo): string[] {
   if (!MODES.includes(info.mode)) throw new Error(`${info.title} is hosted in ${MODES.join(' or ')}, not ${info.mode}`);
   return [
     'doom-server',
-    ...(info.mode === 'deathmatch' ? ['-deathmatch'] : []),
+    ...(info.mode === 'deathmatch' ? ['-deathmatch', '-nomonsters'] : []),
     '-warp',
     String(warp[0]),
     String(warp[1]),

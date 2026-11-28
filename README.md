@@ -82,10 +82,11 @@ Quit in Doom's menu leaves the page as it was before **Play**.
 Playing together is in the game's page's header, as the games module gives it to any game module
 that asks. **Start server** starts a server of the WAD that everyone here can play on: choose the
 map, deathmatch (everyone against everyone) or cooperative (together against the monsters), and how
-many may play, from 2 to 4. It is played at Hurt Me Plenty. While it runs, **Join** at the foot of
-the game's frame enters it and says whose server it is and who plays; **Play** still starts the game
-alone. The one who started it, or an administrator, has **Stop server**, which drops everyone in it.
-A server nobody has played on for five minutes stops by itself.
+many may play, from 2 to 4. It is played at Hurt Me Plenty, a deathmatch without the map's monsters.
+While it runs, **Join** at the foot of the game's frame enters it and says whose server it is and
+who plays; **Play** still starts the game alone. The one who started it, or an administrator, has
+**Stop server**, which drops everyone in it. A server nobody has played on for five minutes stops by
+itself.
 
 The game's own main menu has **Join Game**, which lists the servers of the WAD that run here, found
 as on a home network, and joins the one you choose, from the title screen or from a game alone.

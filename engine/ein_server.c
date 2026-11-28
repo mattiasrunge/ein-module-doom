@@ -22,9 +22,9 @@
 //	came and sends what is due.
 //
 //	Its command line: -deathmatch or -altdeath (cooperative without
-//	either), -warp <episode> <map>, -skill <1-5>, -players <n>, and
-//	-servername <name>, what the games' own search for servers lists
-//	it as.
+//	either), -nomonsters, -warp <episode> <map>, -skill <1-5>,
+//	-players <n>, and -servername <name>, what the games' own search
+//	for servers lists it as.
 //
 
 #include <stdarg.h>
@@ -61,6 +61,7 @@ void ein_start(int argc, char **argv)
     ein_hosted = true;
     ein_hosted_deathmatch = M_ParmExists("-altdeath") ? 2
                           : M_ParmExists("-deathmatch") ? 1 : 0;
+    ein_hosted_nomonsters = M_ParmExists("-nomonsters");
 
     i = M_CheckParmWithArgs("-warp", 2);
     if (i > 0)
